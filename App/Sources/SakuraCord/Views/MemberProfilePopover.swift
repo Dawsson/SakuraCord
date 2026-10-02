@@ -148,7 +148,10 @@ struct MemberProfilePopover<Footer: View>: View {
         }
         .onPreferenceChange(ProfileContentHeightKey.self) { newHeight in
             guard editor == nil, newHeight.isFinite, newHeight > 0 else { return }
-            contentHeight = max(250, newHeight)
+            let measuredHeight = max(250, newHeight)
+            guard contentHeight != measuredHeight else { return }
+            contentHeight = measuredHeight
+            popoverPresentationContext?.contentSizeDidChange?()
         }
         .task(id: cosmeticPolicy.disables(.gradient, for: member.id) ? nil : theme.source(for: profile, scale: displayScale, allowsTheme: editor?.isNitro)) {
             if !cosmeticPolicy.disables(.gradient, for: member.id) {
