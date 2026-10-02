@@ -229,6 +229,7 @@ private struct ChatWorkspaceSupplementaryContent: View {
                         roleColorDisplay: model.accessibilitySettings.roleColorDisplay
                     ),
                     openProfile: model.expandProfile,
+                    contextMenu: { MemberContextMenu.make(for: $0, model: model) },
                     updateViewport: model.updateMemberListViewport
                 )
                 .frame(width: ChatChromeMetrics.memberListWidth)

@@ -179,6 +179,13 @@ struct MemberProfilePopover<Footer: View>: View {
     private func profileScrollContent(width contentWidth: CGFloat) -> some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 11) {
+                if profile?.isPrivate == true {
+                    Label("Private Profile", systemImage: "lock.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(.quaternary)
+                }
                 ProfileHeroSection(
                     member: member,
                     profile: profile,
@@ -235,6 +242,9 @@ struct MemberProfilePopover<Footer: View>: View {
                             layout: layout
                         )
                     }
+                    if profile.isPrivate == true {
+                        privateProfileNotice(profile)
+                    }
                     if let editor, editor.scope == .main || editor.isNitro {
                         ProfileInlineBioEditor(value: Binding(get: { editor.bio }, set: { editor.bio = $0 }), displayValue: profile.bio, model: editor.model)
                         .id(editor.draftGeneration)
@@ -270,6 +280,16 @@ struct MemberProfilePopover<Footer: View>: View {
             }
         }
         .scrollIndicators(editorModal == nil && (editor != nil || contentHeight > maximumPopoverHeight) ? .visible : .hidden)
+    }
+
+    private func privateProfileNotice(_ profile: UserProfile) -> some View {
+        Text("\(profile.displayName)'s profile is private, so some info is hidden. Add them as a friend to see more.")
+            .font(.subheadline)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal, 16)
     }
 
     @ViewBuilder
