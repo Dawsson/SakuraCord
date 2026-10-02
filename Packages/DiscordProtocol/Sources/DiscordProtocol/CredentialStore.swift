@@ -112,11 +112,15 @@ public actor KeychainCredentialStore: CredentialStore {
 
     public func store(_ credential: Data, accountID: String) async throws -> CredentialHandle {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: accountID]
-        SecItemDelete(query as CFDictionary)
-        var insert = query
-        insert[kSecValueData as String] = credential
-        insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        let status = SecItemAdd(insert as CFDictionary, nil)
+        // Updating in place preserves the item's existing Keychain access approvals.
+        let attributes = [kSecValueData as String: credential]
+        var status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var insert = query
+            insert[kSecValueData as String] = credential
+            insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            status = SecItemAdd(insert as CFDictionary, nil)
+        }
         guard status == errSecSuccess else { throw KeychainError(status: status) }
         return CredentialHandle(accountID: accountID)
     }

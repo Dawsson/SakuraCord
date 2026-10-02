@@ -258,6 +258,13 @@ refuse missing certificates, ad-hoc signatures, and signatures from a different
 identity. Packaging without launch still supports ad-hoc signing, which can be
 selected explicitly with `SAKURACORD_CODE_SIGN_IDENTITY=-`.
 
+A self-signed local identity does not provide an Apple team identifier. The
+login Keychain may therefore remember its access approval by the app's code
+hash and ask again after each rebuild. For persistent Keychain approval across
+builds, use a valid Apple Development identity and keep the same team and
+bundle identifier. Changing identities can require one new approval. Do not
+work around this by allowing all applications to access the saved session.
+
 Screen sharing uses ScreenCaptureKit's system content picker. A source selected
 there is authorized for that capture session and does not require a separate
 global Screen Recording grant. Do not reset TCC or direct users to System
