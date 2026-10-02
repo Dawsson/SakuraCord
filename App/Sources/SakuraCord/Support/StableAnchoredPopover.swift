@@ -6,6 +6,7 @@ import SwiftUI
 final class StablePopoverPresentationContext {
     private(set) var hasFinishedPresenting = false
     var dismiss: (() -> Void)?
+    var contentSizeDidChange: (() -> Void)?
     var preventsDismissal = false
     var escapeAction: (() -> Void)?
 
@@ -534,6 +535,7 @@ struct StableAnchoredPopoverPresenter<Content: View>: NSViewRepresentable {
                 return
             }
             let presentationContext = StablePopoverPresentationContext()
+            presentationContext.contentSizeDidChange = { [weak self] in self?.scheduleRefresh() }
             presentationContext.dismiss = { [weak self] in
                 self?.dismissPresentation()
             }
@@ -572,15 +574,16 @@ struct StableAnchoredPopoverPresenter<Content: View>: NSViewRepresentable {
         private func installOutsideClickHandling() {
             guard outsideClickHandler != nil else { return }
             outsideClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-                MainActor.assumeIsolated {
+                let consumed = MainActor.assumeIsolated {
                     guard let self, let popover = self.popover, popover.isShown,
                           event.window !== popover.contentViewController?.view.window,
                           self.popoverShouldClose(popover)
-                    else { return event }
-                    if self.outsideClickHandler?(event) == true { return nil }
+                    else { return false }
+                    if self.outsideClickHandler?(event) == true { return true }
                     self.dismissPresentation()
-                    return event
+                    return false
                 }
+                return consumed ? nil : event
             }
             deactivateObserver = NotificationCenter.default.addObserver(
                 forName: NSApplication.didResignActiveNotification, object: NSApp, queue: .main
