@@ -9,6 +9,7 @@ enum ProfilePresentationLayout {
 }
 
 struct ProfilePresentationContent<Footer: View>: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let presentation: ProfilePresentationState
     var layout: ProfilePresentationLayout = .popover
     var maximumPopoverHeight: CGFloat = 560
@@ -57,6 +58,11 @@ struct ProfilePresentationContent<Footer: View>: View {
             openProfile: openProfile.map { action in { action(presentation) } }
         )
         .id(presentation.member.id)
+        .transition(.opacity)
+        .animation(
+            layout == .popover && !reduceMotion ? .easeOut(duration: 0.12) : nil,
+            value: presentation.member.id
+        )
     }
 }
 
@@ -175,7 +181,12 @@ struct MemberProfilePopover<Footer: View>: View {
                 if editor != nil {
                     profileScrollContent(width: width - surfaceInset * 2)
                 } else {
-                    GeometryReader { geometry in profileScrollContent(width: geometry.size.width) }
+                    GeometryReader { geometry in
+                        profileScrollContent(
+                            width: geometry.size.width,
+                            minimumHeight: layout == .popover ? max(0, geometry.size.height - 14) : 0
+                        )
+                    }
                 }
             }
             .padding(surfaceInset)
@@ -193,7 +204,7 @@ struct MemberProfilePopover<Footer: View>: View {
         }
     }
 
-    private func profileScrollContent(width contentWidth: CGFloat) -> some View {
+    private func profileScrollContent(width contentWidth: CGFloat, minimumHeight: CGFloat = 0) -> some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 11) {
                 if profile?.isPrivate == true {
@@ -287,17 +298,21 @@ struct MemberProfilePopover<Footer: View>: View {
 
                 }
 
+                if layout == .popover { Spacer(minLength: 0) }
                 footer
             }
             .frame(width: contentWidth, alignment: .leading)
+            .frame(minHeight: minimumHeight, alignment: .top)
             .padding(.bottom, 14)
-            .background {
-                GeometryReader { proxy in
-                    Color.clear.preference(key: ProfileContentHeightKey.self, value: proxy.size.height)
-                }
-            }
+            .background(contentHeightReader)
         }
         .scrollIndicators(editorModal == nil && (editor != nil || contentHeight > maximumPopoverHeight) ? .visible : .hidden)
+    }
+
+    private var contentHeightReader: some View {
+        GeometryReader { proxy in
+            Color.clear.preference(key: ProfileContentHeightKey.self, value: proxy.size.height)
+        }
     }
 
     private func privateProfileNotice(_ profile: UserProfile) -> some View {
