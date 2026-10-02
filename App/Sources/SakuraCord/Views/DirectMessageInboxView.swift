@@ -121,7 +121,8 @@ private struct DirectMessageInboxRow: View {
                 animates: animatesAvatar,
                 isHovered: isHovered
             )
-            .opacity(isMuted ? 0.5 : 1)
+            .saturation(isMuted ? 0.25 : 1)
+            .opacity(isMuted ? 0.35 : 1)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(channel.name)
@@ -151,11 +152,19 @@ private struct DirectMessageInboxRow: View {
                     )
                         .frame(maxWidth: .infinity, minHeight: 14, maxHeight: 16, alignment: .leading)
                         .lineLimit(1)
+                        .opacity(isMuted ? 0.65 : 1)
                         .allowsHitTesting(false)
                 }
             }
 
             Spacer(minLength: 0)
+
+            if isMuted {
+                Image(systemName: "bell.slash.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
 
             if isPinned {
                 Image(systemName: "pin.fill")
