@@ -338,14 +338,8 @@ final class RateLimitURLProtocol: URLProtocol, @unchecked Sendable {
                 json = #"[{"member":{"user":{"id":"2","username":"maya","global_name":"Maya","avatar":null},"nick":"Maya","roles":["101"]}}]"#
             }
         case "/api/v9/users/333333333333333333/profile":
-            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
-            if items?.contains(URLQueryItem(name: "type", value: "popout")) == true {
-                status = 200
-                json = #"{"user":{"id":"333333333333333333","username":"private-user"},"private":true,"mutual_guilds":[{"id":"100"}],"mutual_friends_count":1}"#
-            } else {
-                status = 404
-                json = #"{"message":"Unknown User","code":10013}"#
-            }
+            status = 200
+            json = #"{"user":{"id":"333333333333333333","username":"private-user"},"private":true,"mutual_guilds":[{"id":"100"}],"mutual_friends_count":1}"#
         case "/api/v9/users/111111111111111111/profile",
              "/api/v9/users/222222222222222222/profile":
             RateLimitURLProtocol.unavailableProfileRequestCount += 1
