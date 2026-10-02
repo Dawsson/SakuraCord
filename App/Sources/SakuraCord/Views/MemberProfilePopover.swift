@@ -15,6 +15,7 @@ struct ProfilePresentationContent<Footer: View>: View {
     var showsRoles = true
     let footer: Footer
     var openProfile: ((ProfilePresentationState) -> Void)?
+    var sendMessage: ((UserID, String) async -> Bool)?
 
     init(
         presentation: ProfilePresentationState,
@@ -22,6 +23,7 @@ struct ProfilePresentationContent<Footer: View>: View {
         maximumPopoverHeight: CGFloat = 560,
         showsRoles: Bool = true,
         openProfile: ((ProfilePresentationState) -> Void)? = nil,
+        sendMessage: ((UserID, String) async -> Bool)? = nil,
         @ViewBuilder footer: () -> Footer
     ) {
         self.presentation = presentation
@@ -30,6 +32,7 @@ struct ProfilePresentationContent<Footer: View>: View {
         self.showsRoles = showsRoles
         self.footer = footer()
         self.openProfile = openProfile
+        self.sendMessage = sendMessage
     }
 
     var body: some View {
@@ -42,7 +45,15 @@ struct ProfilePresentationContent<Footer: View>: View {
             layout: layout,
             maximumPopoverHeight: maximumPopoverHeight,
             showsRoles: showsRoles,
-            footer: footer,
+            footer: VStack(alignment: .leading, spacing: 12) {
+                footer
+                if layout == .popover, !presentation.isCurrentUser, let sendMessage {
+                    ProfileQuickMessageView(user: presentation.member.user) { content in
+                        await sendMessage(presentation.member.id, content)
+                    }
+                    .padding(.horizontal, 16)
+                }
+            },
             openProfile: openProfile.map { action in { action(presentation) } }
         )
         .id(presentation.member.id)
@@ -55,14 +66,16 @@ extension ProfilePresentationContent where Footer == EmptyView {
         layout: ProfilePresentationLayout = .popover,
         maximumPopoverHeight: CGFloat = 560,
         showsRoles: Bool = true,
-        openProfile: ((ProfilePresentationState) -> Void)? = nil
+        openProfile: ((ProfilePresentationState) -> Void)? = nil,
+        sendMessage: ((UserID, String) async -> Bool)? = nil
     ) {
         self.init(
             presentation: presentation,
             layout: layout,
             maximumPopoverHeight: maximumPopoverHeight,
             showsRoles: showsRoles,
-            openProfile: openProfile
+            openProfile: openProfile,
+            sendMessage: sendMessage
         ) {
             EmptyView()
         }
@@ -201,7 +214,8 @@ struct MemberProfilePopover<Footer: View>: View {
                     isExpandedProfile: layout == .expanded,
                     animatesRemoteMedia: animatesRemoteMedia,
                     editor: editor,
-                    openEditorPicker: openEditorPicker
+                    openEditorPicker: openEditorPicker,
+                    openProfile: profileExpansionAction
                 )
                 .overlay(alignment: .topTrailing) {
                     if openProfile != nil {
@@ -323,6 +337,11 @@ struct MemberProfilePopover<Footer: View>: View {
         cosmeticPolicy.disables(.gradient, for: member.id) ? [] : theme.colors(for: profile, scale: displayScale, allowsTheme: editor?.isNitro)
     }
 
+    private var profileExpansionAction: (() -> Void)? {
+        guard openProfile != nil else { return nil }
+        return { expandProfile() }
+    }
+
     private func expandProfile() {
         openProfile?()
         popoverPresentationContext?.dismiss?()
@@ -393,6 +412,7 @@ private struct ProfileHeroSection: View {
     let animatesRemoteMedia: Bool
     var editor: ProfileEditorState?
     var openEditorPicker: ((ProfileEditorPicker) -> Void)?
+    var openProfile: (() -> Void)?
 
     private var avatarSize: CGFloat { 70 }
     private var horizontalInset: CGFloat { 16 }
@@ -432,6 +452,7 @@ private struct ProfileHeroSection: View {
                         size: avatarSize,
                         playback: animatesRemoteMedia ? .continuous : .paused
                     )
+                    .modifier(ProfileAvatarExpansion(openProfile: editor == nil ? openProfile : nil))
                     .padding(3)
                 }
                 .modifier(ProfileEditorImageMenu(editor: editor, target: .avatar, open: openEditorPicker))
