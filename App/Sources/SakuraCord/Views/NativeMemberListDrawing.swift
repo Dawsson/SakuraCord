@@ -554,11 +554,14 @@ extension NativeMemberListCanvasView {
             color: .white
         )
         let bounds = CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds])
+        var ascent: CGFloat = 0
+        CTLineGetTypographicBounds(line, &ascent, nil, nil)
+        // draw(line:) adds ascent and flips Core Text's baseline coordinates.
         Self.draw(
             line: line,
             at: CGPoint(
                 x: rect.midX - bounds.width / 2 - bounds.minX,
-                y: rect.midY - bounds.height / 2 - bounds.minY
+                y: rect.midY + bounds.midY - ascent
             ),
             context: context
         )
