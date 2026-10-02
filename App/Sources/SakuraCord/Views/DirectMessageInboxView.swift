@@ -24,16 +24,16 @@ struct DirectMessageInboxView: View {
                         selection = channel.id
                     } label: {
                         DirectMessageInboxRow(
-                        model: model,
-                        channel: channel,
-                        isPinned: pinnedChannelIDs.contains(channel.id),
-                        member: DirectMessageInboxPolicy.recipientMember(
-                            for: channel,
-                            membersByID: membersByID
-                        ),
-                        call: privateCallsByChannel[channel.id],
-                        animatesAvatar: animatesAvatars
-                    )
+                            model: model,
+                            channel: channel,
+                            isPinned: pinnedChannelIDs.contains(channel.id),
+                            member: DirectMessageInboxPolicy.recipientMember(
+                                for: channel,
+                                membersByID: membersByID
+                            ),
+                            call: privateCallsByChannel[channel.id],
+                            animatesAvatar: animatesAvatars
+                        )
                     }
                     .buttonStyle(.plain)
                     .pointerStyle(.link)
@@ -195,6 +195,7 @@ private struct DirectMessageInboxRow: View {
                     .accessibilityLabel("Unread")
             }
         }
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityValue(accessibilityValue)
         .onModalHover { isHovered = $0 }
