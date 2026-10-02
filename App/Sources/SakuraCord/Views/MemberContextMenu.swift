@@ -6,14 +6,20 @@ enum MemberContextMenu {
     static func make(for member: Member, model: AppModel) -> NSMenu {
         let menu = NSMenu()
         add("Profile", symbol: "person.crop.circle", to: menu) {
-            if model.selectedMember?.id != member.id || !model.isInspectorProfilePresented {
-                model.selectMember(member)
-            }
+            model.presentProfile(for: member, destination: .expanded)
+            model.dismissContextualProfile()
+            model.dismissInspectorProfile()
         }
         if model.selectedChannel != nil {
             add("Mention", symbol: "at", to: menu) {
                 let separator = model.draft.isEmpty || model.draft.last?.isWhitespace == true ? "" : " "
+                model.rememberMentionMember(member)
                 model.updateDraft(model.draft + separator + "<@\(member.id)> ")
+                NotificationCenter.default.post(
+                    name: .sakuracordFocusComposer,
+                    object: MessageComposerDestination.channel,
+                    userInfo: ["selection": NSRange(location: model.draft.utf16.count, length: 0)]
+                )
             }
         }
         if member.id != model.snapshot?.currentUser.id {
