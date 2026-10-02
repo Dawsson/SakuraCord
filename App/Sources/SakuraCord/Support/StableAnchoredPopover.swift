@@ -174,7 +174,7 @@ struct StablePopoverConfiguration {
     static let memberProfile = StablePopoverConfiguration(
         preferredEdge: .maxX,
         behavior: .semitransient,
-        animates: false,
+        animates: true,
         ignoresMouseEvents: false,
         contentSizing: .constrained(CGSize(width: 520, height: 760)),
         stabilizesInitialContentSize: true,
@@ -639,7 +639,12 @@ struct StableAnchoredPopoverPresenter<Content: View>: NSViewRepresentable {
             // Re-presenting an already shown popover interrupts native scroll elasticity.
             // Reposition only when the anchor actually moves or the preferred edge changes.
             if !popover.isShown || presentedEdge != placement.edge || presentedAnchorFrame != sourceFrame {
+                let animates = popover.animates
+                if popover.isShown, configuration.reusesPresentationOnIdentityChange {
+                    popover.animates = false
+                }
                 popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: placement.edge)
+                popover.animates = animates
                 presentedEdge = placement.edge
                 presentedAnchorFrame = sourceFrame
             } else if popover.positioningRect != anchorView.bounds {
