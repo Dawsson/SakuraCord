@@ -121,8 +121,7 @@ private struct DirectMessageInboxRow: View {
                 animates: animatesAvatar,
                 isHovered: isHovered
             )
-            .saturation(isMuted ? 0.25 : 1)
-            .opacity(isMuted ? 0.35 : 1)
+            .opacity(dimsMutedConversation ? 0.3 : 1)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(channel.name)
@@ -152,19 +151,12 @@ private struct DirectMessageInboxRow: View {
                     )
                         .frame(maxWidth: .infinity, minHeight: 14, maxHeight: 16, alignment: .leading)
                         .lineLimit(1)
-                        .opacity(isMuted ? 0.65 : 1)
+                        .opacity(dimsMutedConversation ? 0.65 : 1)
                         .allowsHitTesting(false)
                 }
             }
 
             Spacer(minLength: 0)
-
-            if isMuted {
-                Image(systemName: "bell.slash.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-            }
 
             if isPinned {
                 Image(systemName: "pin.fill")
@@ -238,12 +230,14 @@ private struct DirectMessageInboxRow: View {
         model.isChannelMuted(channel)
     }
 
+    private var dimsMutedConversation: Bool {
+        isMuted && model.selectedChannelID != channel.id
+    }
+
     private var nameColor: Color {
-        if isMuted { return .primary.opacity(0.35) }
-        if channel.unreadCount > 0 || model.selectedChannelID == channel.id {
-            return .primary
-        }
-        return .secondary
+        if model.selectedChannelID == channel.id { return .primary }
+        if isMuted { return .primary.opacity(0.3) }
+        return channel.unreadCount > 0 ? .primary : .secondary
     }
 
     private var accessibilityValue: String {
