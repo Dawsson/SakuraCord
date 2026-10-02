@@ -533,7 +533,7 @@ extension DirectMessageProviderContractTests {
         #expect(request.query == [
             CapturedQueryItem(name: "type", value: "popout"),
             CapturedQueryItem(name: "with_mutual_guilds", value: "true"),
-            CapturedQueryItem(name: "with_mutual_friends", value: "true"),
+            CapturedQueryItem(name: "with_mutual_friends", value: "false"),
             CapturedQueryItem(
                 name: "with_mutual_friends_count",
                 value: "true"

@@ -135,11 +135,13 @@ struct StablePopoverConfiguration {
     let ignoresMouseEvents: Bool
     let contentSizing: StablePopoverContentSizing
     let stabilizesInitialContentSize: Bool
+    var reusesPresentationOnIdentityChange = false
 
     func fixedContentSize(_ size: CGSize) -> Self {
         Self(preferredEdge: preferredEdge, behavior: behavior, animates: animates,
              ignoresMouseEvents: ignoresMouseEvents, contentSizing: .fixed(size),
-             stabilizesInitialContentSize: stabilizesInitialContentSize)
+             stabilizesInitialContentSize: stabilizesInitialContentSize,
+             reusesPresentationOnIdentityChange: reusesPresentationOnIdentityChange)
     }
 
     static let hover = StablePopoverConfiguration(
@@ -172,10 +174,11 @@ struct StablePopoverConfiguration {
     static let memberProfile = StablePopoverConfiguration(
         preferredEdge: .maxX,
         behavior: .semitransient,
-        animates: true,
+        animates: false,
         ignoresMouseEvents: false,
         contentSizing: .constrained(CGSize(width: 520, height: 760)),
-        stabilizesInitialContentSize: true
+        stabilizesInitialContentSize: true,
+        reusesPresentationOnIdentityChange: true
     )
 
     static let toolbarPanel = StablePopoverConfiguration(
@@ -478,7 +481,7 @@ struct StableAnchoredPopoverPresenter<Content: View>: NSViewRepresentable {
                 return
             }
             closeIsScheduled = false
-            if replacesPresentedContent {
+            if replacesPresentedContent, !configuration.reusesPresentationOnIdentityChange {
                 generation &+= 1
                 resetPresentation()
                 installGeometryTracking()
@@ -503,11 +506,11 @@ struct StableAnchoredPopoverPresenter<Content: View>: NSViewRepresentable {
             let scheduledGeneration = generation
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(20))
-                guard let self else { return }
+                guard let self, self.generation == scheduledGeneration else { return }
                 self.showIsScheduled = false
-                guard self.shouldPresent, self.generation == scheduledGeneration else { return }
+                guard self.shouldPresent, let latestContent = self.latestContent else { return }
                 self.anchor?.sourceView?.window?.contentView?.layoutSubtreeIfNeeded()
-                self.show(content: content)
+                self.show(content: latestContent)
             }
         }
 

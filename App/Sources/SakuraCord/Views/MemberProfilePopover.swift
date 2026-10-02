@@ -45,6 +45,7 @@ struct ProfilePresentationContent<Footer: View>: View {
             footer: footer,
             openProfile: openProfile.map { action in { action(presentation) } }
         )
+        .id(presentation.member.id)
     }
 }
 
