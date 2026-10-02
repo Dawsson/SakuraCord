@@ -121,6 +121,7 @@ private struct DirectMessageInboxRow: View {
                 animates: animatesAvatar,
                 isHovered: isHovered
             )
+            .opacity(isMuted ? 0.5 : 1)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(channel.name)
@@ -129,11 +130,7 @@ private struct DirectMessageInboxRow: View {
                             ? .semibold
                             : .regular
                     )
-                    .foregroundStyle(
-                        isMuted
-                            ? Color.primary.opacity(0.35)
-                            : Color.primary
-                    )
+                    .foregroundStyle(nameColor)
                     .lineLimit(1)
                 if let callStatus =
                     DirectMessageInboxPolicy.callStatus(for: call)
@@ -232,13 +229,25 @@ private struct DirectMessageInboxRow: View {
         model.isChannelMuted(channel)
     }
 
-    private var accessibilityValue: String {
-        if channel.mentionCount > 0 {
-            return channel.mentionCount == 1
-                ? "1 unread mention"
-                : "\(channel.mentionCount) unread mentions"
+    private var nameColor: Color {
+        if isMuted { return .primary.opacity(0.35) }
+        if channel.unreadCount > 0 || model.selectedChannelID == channel.id {
+            return .primary
         }
-        return channel.unreadCount > 0 ? "Unread" : ""
+        return .secondary
+    }
+
+    private var accessibilityValue: String {
+        var states: [String] = []
+        if isMuted { states.append("Muted") }
+        if channel.mentionCount > 0 {
+            states.append(channel.mentionCount == 1
+                ? "1 unread mention"
+                : "\(channel.mentionCount) unread mentions")
+        } else if channel.unreadCount > 0 {
+            states.append("Unread")
+        }
+        return states.joined(separator: ", ")
     }
 }
 
