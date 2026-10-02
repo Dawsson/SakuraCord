@@ -215,7 +215,7 @@ struct MemberProfilePopover<Footer: View>: View {
                     animatesRemoteMedia: animatesRemoteMedia,
                     editor: editor,
                     openEditorPicker: openEditorPicker,
-                    openProfile: openProfile == nil ? nil : expandProfile
+                    openProfile: profileExpansionAction
                 )
                 .overlay(alignment: .topTrailing) {
                     if openProfile != nil {
@@ -335,6 +335,11 @@ struct MemberProfilePopover<Footer: View>: View {
 
     private var profileThemeHexes: [UInt32] {
         cosmeticPolicy.disables(.gradient, for: member.id) ? [] : theme.colors(for: profile, scale: displayScale, allowsTheme: editor?.isNitro)
+    }
+
+    private var profileExpansionAction: (() -> Void)? {
+        guard openProfile != nil else { return nil }
+        return { expandProfile() }
     }
 
     private func expandProfile() {

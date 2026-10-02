@@ -1,3 +1,4 @@
+import DiscordProtocol
 import Foundation
 import SakuraCordModels
 
