@@ -437,12 +437,17 @@ struct StableAnchoredPopoverPresenter<Content: View>: NSViewRepresentable {
         private var shouldPresent = false
         private var generation: UInt64 = 0
         private var geometryObserverTokens: [NSObjectProtocol] = []
+        private var outsideClickHandler: ((NSEvent) -> Bool)?
+        private var outsideClickMonitor: Any?
+        private var deactivateObserver: NSObjectProtocol?
         private var latestContent: Content?
         private var presentationIdentity: AnyHashable?
         private var programmaticallyClosingPopovers:
             [ObjectIdentifier: NSPopover] = [:]
 
         isolated deinit {
+            if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+            if let deactivateObserver { NotificationCenter.default.removeObserver(deactivateObserver) }
             for token in geometryObserverTokens {
                 NotificationCenter.default.removeObserver(token)
             }
@@ -455,6 +460,7 @@ struct StableAnchoredPopoverPresenter<Content: View>: NSViewRepresentable {
             configuration: StablePopoverConfiguration,
             onDismiss: @escaping () -> Void,
             presentationIdentity: AnyHashable? = nil,
+            outsideClickHandler: ((NSEvent) -> Bool)? = nil,
             content: Content
         ) {
             let sourceChanged = self.anchor?.sourceView !== anchor.sourceView
@@ -467,6 +473,7 @@ struct StableAnchoredPopoverPresenter<Content: View>: NSViewRepresentable {
             self.anchorSnapshot = anchorSnapshot
             self.configuration = configuration
             self.onDismiss = onDismiss
+            self.outsideClickHandler = outsideClickHandler
             shouldPresent = isPresented
             latestContent = content
             self.presentationIdentity = presentationIdentity
@@ -540,13 +547,14 @@ struct StableAnchoredPopoverPresenter<Content: View>: NSViewRepresentable {
                 }
             )
             let popover = NSPopover()
-            popover.behavior = configuration.behavior
+            popover.behavior = outsideClickHandler == nil ? configuration.behavior : .applicationDefined
             popover.animates = configuration.animates
             popover.delegate = self
             popover.contentViewController = hostingController
             self.hostingController = hostingController
             self.presentationContext = presentationContext
             self.popover = popover
+            installOutsideClickHandling()
             if configuration.stabilizesInitialContentSize {
                 warmInitialContentSize(
                     popover: popover,
@@ -556,6 +564,36 @@ struct StableAnchoredPopoverPresenter<Content: View>: NSViewRepresentable {
             } else {
                 showPopover()
             }
+        }
+
+        // Semitransient AppKit popovers consume the first click outside their window.
+        // A reusable member card instead lets its source handle a different member
+        // immediately, without closing and recreating the popover.
+        private func installOutsideClickHandling() {
+            guard outsideClickHandler != nil else { return }
+            outsideClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                MainActor.assumeIsolated {
+                    guard let self, let popover = self.popover, popover.isShown,
+                          event.window !== popover.contentViewController?.view.window,
+                          self.popoverShouldClose(popover)
+                    else { return event }
+                    if self.outsideClickHandler?(event) == true { return nil }
+                    self.dismissPresentation()
+                    return event
+                }
+            }
+            deactivateObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didResignActiveNotification, object: NSApp, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.dismissPresentation() }
+            }
+        }
+
+        private func removeOutsideClickHandling() {
+            if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+            outsideClickMonitor = nil
+            if let deactivateObserver { NotificationCenter.default.removeObserver(deactivateObserver) }
+            deactivateObserver = nil
         }
 
         private func warmInitialContentSize(
@@ -840,6 +878,7 @@ struct StableAnchoredPopoverPresenter<Content: View>: NSViewRepresentable {
                 programmaticallyClosingPopovers.removeValue(forKey: identifier) != nil
             let closedCurrentPopover = popover === closedPopover
             if closedCurrentPopover {
+                removeOutsideClickHandling()
                 popover = nil
                 hostingController = nil
                 anchorTracker.detach()
@@ -878,6 +917,7 @@ struct StableAnchoredPopoverPresenter<Content: View>: NSViewRepresentable {
         }
 
         private func resetPresentation() {
+            removeOutsideClickHandling()
             showIsScheduled = false
             presentationIsScheduled = false
             refreshIsScheduled = false
