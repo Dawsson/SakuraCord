@@ -370,7 +370,7 @@ extension NativeMemberListCanvasView {
                 self?.dismissProfile(ifCurrent: presentation.requestID)
             },
             presentationIdentity: AnyHashable(presentation.member.id),
-            content: AnyView(ProfilePresentationContent(presentation: presentation, openProfile: openProfile)
+            content: AnyView(ProfilePresentationContent(presentation: presentation, openProfile: openProfile, sendMessage: sendProfileMessage)
                 .environment(\.profileCosmeticPolicy, cosmeticPolicy))
         )
     }

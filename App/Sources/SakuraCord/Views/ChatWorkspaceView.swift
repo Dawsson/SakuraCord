@@ -230,6 +230,7 @@ private struct ChatWorkspaceSupplementaryContent: View {
                     ),
                     openProfile: model.expandProfile,
                     contextMenu: { MemberContextMenu.make(for: $0, model: model) },
+                    sendProfileMessage: model.sendProfileMessage,
                     updateViewport: model.updateMemberListViewport
                 )
                 .frame(width: ChatChromeMetrics.memberListWidth)

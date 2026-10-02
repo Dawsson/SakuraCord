@@ -139,6 +139,7 @@ final class NativeMemberListCoordinator: NSObject {
             return self.parent.contextMenu?(original) ?? NSMenu()
         }
         canvas.openProfile = parent.openProfile
+        canvas.sendProfileMessage = parent.sendProfileMessage
         canvas.modalInputDidChange()
         AppPerformanceSignposts.measureSync("MemberListCanvasUpdate") {
             canvas.updatePresentation(
