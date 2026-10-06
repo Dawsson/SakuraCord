@@ -15,9 +15,10 @@
 ## Profile reads
 
 Explicit profile reads use `GET /users/{user}/profile` with `type=popout`,
-`with_mutual_guilds=true`, `with_mutual_friends=false`, and
+`with_mutual_guilds=true`, `with_mutual_friends=true`, and
 `with_mutual_friends_count=true`; include `guild_id` only in guild context.
-The summary requests the mutual-friend count without the full friend list.
+SakuraCord requests friend identities because the existing mutual-friends list
+uses this same response; a count-only summary cannot populate that list.
 Reads coalesce by user and guild context. A successful response's `private`
 flag controls the private-profile notice. An unavailable `404` remains a
 profile-scoped error rather than implying privacy or stopping the session.
