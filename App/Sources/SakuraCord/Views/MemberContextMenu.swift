@@ -10,7 +10,8 @@ enum MemberContextMenu {
             model.dismissContextualProfile()
             model.dismissInspectorProfile()
         }
-        if model.selectedChannel != nil, model.commandComposer.activeCommand == nil {
+        if let channel = model.selectedChannel, channel.kind != .forum,
+           model.selectedConversationAccess.canSend, model.commandComposer.activeCommand == nil {
             add("Mention", symbol: "at", to: menu) {
                 let separator = model.draft.isEmpty || model.draft.last?.isWhitespace == true ? "" : " "
                 model.rememberMentionMember(member)
