@@ -60,35 +60,97 @@ headline instead of the regular sakura headline:
 }
 ```
 
-Validate the copy before creating and pushing the tag:
+Start from the issues the release ships. The helper lists all open issues
+labelled `status: in nightly`; `--milestone` also includes closed issues labelled
+`status: shipped` in that milestone, including fixes already shipped in betas:
 
 ```sh
-node script/release_automation.mjs validate-copy \
-  --input Releases/v0.1.3.json --tag v0.1.3
-git add Releases/v0.1.3.json
-git commit -m "Prepare v0.1.3 release copy"
-git switch nightly
-git merge main
-git push origin nightly
-git switch main
-git tag v0.1.3
-git push origin main v0.1.3
+node script/release_issues.mjs --milestone 0.1.3
 ```
 
-For a nightly beta, push the source branch and then its tag instead:
+Verify that the listed fixes are contained in the intended tag, then rewrite
+the checklist into user-facing copy per the style guides. The helper does not
+check commit ancestry. After publication, the hub checks recorded fix SHAs
+against the tag and closes eligible issues as Shipped, including for beta
+releases. It records a later regular release separately and posts release
+updates with Discord follower notifications. See
+[Issues and roadmap](README.md#issues-and-roadmap) for the full issue lifecycle.
+
+## Promote and tag
+
+These examples assume `origin` is the canonical repository and a clean checkout
+with installed hooks. Substitute the approved **new, unused** tag; the shell
+variable deliberately requires you to supply it. Do not reuse the historical
+versions in the schema examples. Stop if a command fails; inspect divergence
+rather than force-pushing or skipping validation.
+
+### Regular release
+
+This sequence promotes the reviewed `nightly` tip to `main`. Before starting,
+confirm that the entire selected nightly tip is the intended release candidate.
+If a different commit is intended, prepare/review that promotion separately.
+Refresh both branches without rewriting local commits:
 
 ```sh
+git fetch origin main nightly
 git switch nightly
+git merge --ff-only origin/nightly
+git switch main
+git merge --ff-only origin/main
+git merge --ff-only nightly
+```
+
+Now create the approved `Releases/<tag>.json` on **main**, then run the following
+in one shell, setting `release_tag` to the approved regular version first:
+
+```sh
+: "${release_tag:?Set release_tag to the approved new regular tag}"
+node script/release_automation.mjs validate-copy \
+  --input "Releases/$release_tag.json" --tag "$release_tag"
+git add "Releases/$release_tag.json"
+git commit -m "Prepare $release_tag release copy"
+git switch nightly
+git merge --ff-only main
+git push --atomic origin main nightly
+git fetch origin nightly
+git merge-base --is-ancestor main origin/nightly
+git switch main
+git tag "$release_tag"
+git push origin "$release_tag"
+```
+
+The atomic branch push keeps `main` an ancestor of remote `nightly` before the
+tag is published. If atomic pushes are unavailable, push `nightly` successfully
+first, then `main`, verify remote ancestry, and only then push the tag. A remote
+race or hook failure is a reason to stop and reassess, not to force either ref.
+
+### Nightly beta
+
+Start on the reviewed `nightly` branch, updated from `origin/nightly`. Save the
+approved beta copy there. Set `release_tag` to the approved new `vX.Y.Z-Beta-N`
+value, then validate, commit and push the source before the tag:
+
+```sh
+git fetch origin nightly
+git switch nightly
+git merge --ff-only origin/nightly
+: "${release_tag:?Set release_tag to the approved new beta tag}"
+node script/release_automation.mjs validate-copy \
+  --input "Releases/$release_tag.json" --tag "$release_tag"
+git add "Releases/$release_tag.json"
+git commit -m "Prepare $release_tag release copy"
 git push origin nightly
-git tag v0.1.5-Beta-1
-git push origin v0.1.5-Beta-1
+git fetch origin nightly
+git merge-base --is-ancestor HEAD origin/nightly
+git tag "$release_tag"
+git push origin "$release_tag"
 ```
 
 The pre-push hook and release job both reject a missing, malformed, or
-mismatched release-copy file for either track. Nightly tags run the same
-pre-commit code-quality hook, pre-push committed-tree and release-copy checks,
-pre-release `./script/ci.sh` build and full test matrix, Sparkle secret checks,
-packaging, signature validation, and reviewed update-notes validation as regular tags.
+mismatched release-copy file for either track. Release-copy commits run the
+pre-commit code-quality hook. Both tag tracks require pre-push committed-tree
+and release-copy checks, fresh or reusable CI validation as described below,
+Sparkle secret checks, packaging, signature checks and update-notes validation.
 
 ### Validation, parallel packaging, and caches
 
@@ -126,6 +188,20 @@ Cloudflare Worker serves the newest published prerelease's signed
 tracks in the app checks the newly selected feed through a silent Sparkle
 information check and remains silent when no newer build exists.
 
+## Homebrew distribution
+
+The [Homebrew tap](https://github.com/SakuraCordApp/homebrew-tap) owns the
+`sakuracord` cask. Its scheduled workflow checks this repository's latest regular
+release hourly, verifies the downloaded DMG against GitHub's SHA-256 digest,
+and updates the tap's version, URL, and checksum. Beta releases are excluded.
+The tap uses its own `GITHUB_TOKEN`; app release publication needs no additional
+secret or cross-repository write permission.
+
+After a regular release, verify the tap's **Update cask** workflow succeeds, or
+dispatch it manually for an immediate update. If the app's minimum macOS,
+architecture, or packaging layout changes, update the cask's requirements too.
+The tap's README owns its local checks and workflow setup.
+
 ## One-time Sparkle setup
 
 SakuraCord pins the `SakuraCordApp/Sparkle` fork at
@@ -156,14 +232,15 @@ confirming both the offline backup and repository secrets.
 
 ## One-time Discord setup
 
-Store the bot credential and destination IDs as repository secrets:
+Store the bot credential and destination IDs as repository secrets. Each command
+prompts for the deployment value; keep those values out of the runbook:
 
 ```sh
 gh secret set DISCORD_BOT_TOKEN
-printf '%s' '1528180315233714368' | gh secret set DISCORD_RELEASE_CHANNEL_ID
-printf '%s' '1528177363995590795' | gh secret set DISCORD_UPDATES_ROLE_ID
-printf '%s' '1541185451090645064' | gh secret set DISCORD_NIGHTLY_RELEASE_CHANNEL_ID
-printf '%s' '1541194051196289157' | gh secret set DISCORD_NIGHTLY_UPDATES_ROLE_ID
+gh secret set DISCORD_RELEASE_CHANNEL_ID
+gh secret set DISCORD_UPDATES_ROLE_ID
+gh secret set DISCORD_NIGHTLY_RELEASE_CHANNEL_ID
+gh secret set DISCORD_NIGHTLY_UPDATES_ROLE_ID
 ```
 
 The bot must be able to view and send in both configured channels and mention

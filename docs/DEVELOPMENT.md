@@ -1,7 +1,10 @@
 # Development
 
-This guide collects the day-to-day commands and safety rules that are useful
-when working on SakuraCord but too detailed for the public project README.
+Run commands from the repository root. Start with [Setup](#setup) and
+[Launch modes](#launch-modes); use [build and verification](#build-and-verification)
+for checks, [troubleshooting](#troubleshooting) for failures, and
+[report a problem](#report-a-problem) for support. Exact ownership lives in
+[Architecture](ARCHITECTURE.md); focused suite selection lives in [Testing](TESTING.md).
 
 ## Setup
 
@@ -57,7 +60,7 @@ verification requires Discord and is excluded from this offline fixture.
 **Build & Run Offline Sign In** rebuilds and launches the same mode from Codex.
 
 Use `./script/build_and_run.sh run` to launch the normal app and restore an
-existing SakuraCord session from Keychain. Read-only authenticated verification
+existing SakuraCord session through the configured credential mode. Read-only authenticated verification
 may observe existing state and allow normal connection or session-maintenance
 traffic, but agent-run verification must not deliberately mutate remote account
 state or content without an explicit request for that specific action.
@@ -76,65 +79,26 @@ staged app bundle.
 
 ## Settings cards in chat
 
-Paste these HTTPS links into a SakuraCord conversation to render an action card.
-Every path below uses `https://sakuracord.app/settings/` as its prefix.
+A `https://sakuracord.app/settings/<page>/<control>` link renders a navigation
+card. Page-only links open that settings page. The
+[settings catalogue](../App/Sources/SakuraCord/Models/Settings/SettingsCatalog.swift)
+and [deep-link mapping](../App/Sources/SakuraCord/Models/Settings/SettingsDeepLinkDestination.swift)
+own supported destinations; do not maintain a second exhaustive URL inventory.
 
-| Destination | Path after the prefix |
-| --- | --- |
-| Message composer appearance (Default / Legacy) | `appearance/composer` |
-| Message appearance (Default / Bubbles) | `appearance/messages` |
-| Edit Profile | `profiles` |
-| Manage Accounts | `my-account` |
-| General | `general` |
-| Appearance | `appearance` |
-| Theme | `theme` |
-| Notifications | `notifications` |
-| Voice & Video | `voice-video` |
-| Accessibility | `accessibility` |
-| Keyboard Shortcuts | `keyboard-shortcuts` |
-| Features | `features` |
-| Privacy | `privacy-safety` |
-| Storage & Downloads | `storage-downloads` |
-| Diagnostics | `diagnostics` |
-| Updates | `software-updates` |
-| Extensions | `extensions` |
-| Import & Export | `import-export` |
-| About | `about` |
-| Export and send sanitised diagnostics | `diagnostics/send` |
+Examples include `settings/profiles`, `settings/appearance/messages`,
+`settings/features/compaction-quality` and `settings/voice-video/input-device`.
+A control path uses its stable control ID without the prefix before its first
+dot. Legacy General attachment links resolve to Features. Opening a card reveals
+the control using Settings search behaviour; it does not change values, bypass
+eligibility or enable a disabled parent policy.
 
-Every catalogued setting has a card at `<page>/<control>`, using the page paths
-above and the stable control ID without its prefix before the first dot.
-For example, `voice-video/input-device`, `general/spell-check`,
-`notifications/sound`, `theme/brightness`, `profiles/pronouns`,
-`keyboard-shortcuts/toggleMute`, and `import-export/include-theme` target
-individual controls. `appearance/composer` and `appearance/messages` retain
-their existing paths. The catalog is the source of truth; new controls receive
-links automatically.
-
-Features options use `features/<control>`, including `show-hidden-channels`,
-`fake-nitro-emojis`, `fake-nitro-stickers`, `fake-nitro-soundboard`,
-`fake-nitro-stream-quality`, `compaction-prompt`, `compaction-quality`,
-`external-upload-prompt`, and `external-provider`. Older `general/<control>`
-attachment links still open their current Features destination. Upload privacy
-options use `privacy-safety/remove-media-metadata` and
-`privacy-safety/anonymise-file-names`.
-
-Individual cards show the setting's title and use the same reveal and highlight
-as Settings search, including fields that load asynchronously. Opening a card
-only navigates; actions such as resetting, importing, or changing a profile still
-require using the setting itself. Account and Nitro availability still apply.
-Attachment options stay visible and are disabled when their parent policy
-makes them unavailable; following a link does not enable compression or external uploads.
-
-The diagnostics action asks for confirmation naming the source conversation,
-checks message and attachment permissions, and sends the existing sanitised API
-log export there without changing the composer draft. Threads, forum posts, and
-voice chats keep their own source channel ID even if navigation changes. A
-confirmation from a replaced account cannot send. Failed uploads use the normal
-outbox retry/discard flow. No destination can be supplied through the URL.
-
-The existing `update` action and `themes/<token>` shared-theme links remain
-supported.
+The explicit `settings/diagnostics/send` action is described in
+[Report a problem](#report-a-problem). It confirms the source conversation,
+checks current permissions and account ownership, and shares the existing export
+without changing the draft. A URL cannot supply an arbitrary destination.
+The `https://sakuracord.app/update` action and `themes/<token>` links remain
+supported. `https://sakuracord.app/report` opens the in-app report flow;
+`?type=bug` or `?type=feature` chooses the form.
 
 ## Local credential mode
 
@@ -213,6 +177,16 @@ failed or cancelled CI runs upload them as a seven-day artifact. A timeout fails
 validation without retrying or skipping tests. The CI build-and-test step also
 has a 30-minute outer limit covering compilation and framework staging.
 
+### Profiling command pickers
+
+In Instruments, use Time Profiler with the app's `PointsOfInterest` signposts.
+`CommandPickerQuery`, `CommandActivation`, `CommandSubmit`, and `PickerViewport`
+measure local preparation and native viewport work. `CommandAutocompleteRequest`
+measures the autocomplete HTTP request after its typing debounce; it does not
+include the later Gateway response. Compare cold catalog loading separately from
+warm typing, keyboard navigation, selection, and sending. Viewport timings exclude
+Core Animation presentation and must not be reported as complete frame times.
+
 ### Verifying native notification audio
 
 The packager converts the bundled Discord message clip to AIFF in the main
@@ -274,3 +248,55 @@ git diff --check
 
 Never commit credentials, cookie exports, authorization headers, account
 databases, personal Discord data, or unsanitized protocol captures.
+
+## Troubleshooting
+
+| Symptom | Inspect first | Next step |
+| --- | --- | --- |
+| Build reports the wrong SDK/compiler or missing Metal tools | `xcodebuild -version`, `swift --version`, selected Xcode | Match the root README requirements and install the Metal component from Setup. |
+| Launcher rejects the signing identity | `security find-identity -v -p codesigning` and the saved machine identity | Follow [local signing](#persistent-local-code-signing-identity); do not bypass launch verification. |
+| Saved account is missing or credential mode disagrees | `./script/debug_credentials.sh status` | Check [credential mode](#local-credential-mode) before migrating or resetting anything. |
+| Another build/test holds the checkout | The operation reported by the guarded script | Let it finish or stop that operation deliberately. Do not delete a live lock or launch a competing build. |
+| Computer Use targets another SakuraCord build | `./script/runtime.sh` | Use the complete path printed on its `App:` line; launch through the guarded script. |
+| Tests hang | `.codex-runtime/test-diagnostics/` output, events and stack samples | Identify the last started test and blocked owner; do not hide the timeout with retries. |
+| Voice, Gateway or history fails | Diagnostics support summary and API/panic logs | Capture the failing phase and timestamp using the recipe below; distinguish permission, transport and decoding failures. |
+| Notification sound appears requested but is inaudible | Packaged resource and actual playback event | Follow [native notification audio verification](#verifying-native-notification-audio). |
+| Published update/announcement is incomplete | Release workflow checkpoint and validation output | Use [publication recovery](RELEASING.md#publication-and-recovery). |
+
+## Report a problem
+
+Type `/bug` or `/suggest` in a conversation's composer, or use **Help →
+Report a Bug…** or **Suggest a Feature…**. SakuraCord files the report with the
+signed-in Discord account and fills in the version and system information. Bug
+reports can also attach the sanitized Discord API log and the latest panic save
+directly. Matching reports appear while you type so you can follow one instead.
+Without a signed-in account, the Help menu opens the website form with the same
+values prefilled. Reports and discussion follow the shared
+[issue-management flow](README.md#issues-and-roadmap).
+
+1. Record the steps, expected result, actual result, and approximate failure time.
+   Include whether it occurs in a DM, server, thread, call or offline fixture;
+   avoid posting private message content or account identifiers unnecessarily.
+2. Open **Settings → Diagnostics**, select **Refresh Status**, then
+   **Copy Support Summary** (or **Export Support Summary…**). It includes app,
+   system and subsystem information useful for reproducing the problem.
+3. For connection or protocol failures, use **Export API Logs…** soon after the
+   failure. **Open Diagnostics Folder…** appears when managed logs exist and can
+   locate panic snapshots. Clear Logs removes evidence, so export before clearing.
+4. Attach the relevant summary/log to the issue or designated support conversation.
+   Describe any settings needed to reproduce it and whether another client is
+   connected. Review attachments before posting; do not attach credentials,
+   Discord storage databases or unsanitized traffic captures.
+
+API log exports and managed disk logs use the shared
+[redaction contract](protocol/SESSION.md#diagnostics). That contract also explains
+raw in-memory retention, default panic saves and the separate optional capture
+modes. A support summary is useful even without enabling additional capture.
+Connection diagnostics can help investigate transport stalls, but enable it for
+that investigation rather than assuming detailed payload capture includes it.
+
+A `https://sakuracord.app/settings/diagnostics/send` card can offer to share the
+same sanitized API export to its source conversation, with a destination-naming
+confirmation. Exporting locally does not send anything. Agents follow the
+repository's explicit authorization rules before sending files or reproducing
+account-mutating actions.

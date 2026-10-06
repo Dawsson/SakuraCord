@@ -315,6 +315,9 @@ struct ComposerTextView: NSViewRepresentable {
 
         let textView = ComposerNSTextView(frame: .zero, textContainer: textContainer)
         textView.delegate = context.coordinator
+        textView.onFirstResponderChange = { [weak coordinator = context.coordinator] in
+            coordinator?.firstResponderDidChange($0)
+        }
         textView.isEditable = context.environment.isEnabled
         textView.isSelectable = true
         textView.isRichText = true
@@ -513,22 +516,21 @@ struct ComposerTextView: NSViewRepresentable {
             self.parent = parent
         }
 
-        func textDidBeginEditing(_ notification: Notification) {
-            appliedFocus = true
-            if !parent.isFocused {
-                parent.isFocused = true
+        func firstResponderDidChange(_ isFirstResponder: Bool) {
+            // Publish after AppKit finishes the responder change, never during
+            // a SwiftUI update that triggered it.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                appliedFocus = isFirstResponder
+                if parent.isFocused != isFirstResponder { parent.isFocused = isFirstResponder }
             }
         }
 
         func textDidEndEditing(_ notification: Notification) {
-            appliedFocus = false
             if let textView = notification.object as? NSTextView {
                 updateCompositionState(from: textView)
             } else {
                 updateCompositionState(isComposing: false)
-            }
-            if parent.isFocused {
-                parent.isFocused = false
             }
         }
 
@@ -759,7 +761,7 @@ final class ComposerEmojiImageStore {
     }
 }
 
-final class ComposerNSTextView: NSTextView {
+final class ComposerNSTextView: ComposerFocusReportingTextView {
     var onReturn: ((NSEvent) -> Bool)?
     var onEscape: (() -> Void)?
     var onEditLatestMessage: (() -> Bool)?

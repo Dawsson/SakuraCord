@@ -1441,7 +1441,7 @@ private final class AppKitMarkdownCacheKey: NSObject {
 
 public extension DiscordMarkdown {
     /// Discord invite cards are client-derived, including bare links and links inside angle brackets.
-    /// Reuse the Markdown parser so code blocks and inline code never initiate preview requests.
+    /// Code and spoiler text never initiate preview requests or expose invite cards.
     static func serverInviteReferences(in source: String) -> [ServerInviteReference] {
         guard source.contains("discord.gg/") || source.contains("discord.com/invite/")
                 || source.contains("discordapp.com/invite/") else { return [] }
@@ -1449,7 +1449,7 @@ public extension DiscordMarkdown {
         var seen: Set<String> = []
         for line in appKitPlan(source).lines {
             if case .code = line.block { continue }
-            for run in line.runs where !run.traits.contains(.inlineCode) {
+            for run in line.runs where run.traits.isDisjoint(with: [.inlineCode, .spoiler]) {
                 let candidates = run.link.map { [$0.absoluteString] }
                     ?? run.text.components(separatedBy: .whitespacesAndNewlines)
                 for candidate in candidates {

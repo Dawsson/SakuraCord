@@ -23,7 +23,7 @@ extension DiscordRESTProvider {
         var body: [String: JSONValue] = [
             "content": .string(draft.content),
             "nonce": .string(draft.nonce),
-            "tts": .bool(false),
+            "tts": .bool(draft.isTTS),
             "flags": .number(0),
             // Chromium reports an unknown Network Information API connection
             // type on the current macOS desktop host. The first-party send

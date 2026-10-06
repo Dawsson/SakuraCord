@@ -292,3 +292,28 @@ import Testing
         #expect(SakuraCordDeepLinkPresentation.all(in: url).isEmpty)
     }
 }
+
+@MainActor
+@Test func `ephemeral messages expose no server message actions`() {
+    let model = AppModel(launchMode: .offlineTesting)
+    let canvas = NativeTimelineCanvasView(frame: CGRect(x: 0, y: 0, width: 600, height: 200))
+    canvas.model = model
+    for flags: MessageFlags in [.ephemeral, [.ephemeral, .loading]] {
+        let message = Message(
+            id: MessageID(rawValue: 70), channelID: ChannelID(rawValue: 71),
+            author: User(id: UserID(rawValue: 72), username: "fixture", displayName: "Fixture"),
+            content: "Private response", flags: flags
+        )
+        let row = MessageRowPresentation(message: message, startsGroup: true, startsDay: false,
+                                         replyPreview: nil, isReplyAvailable: false)
+        let mode = MessageOutboxPresentation.interactionMode(for: message)
+        #expect(!mode.allowsHoverActions)
+        #expect(!mode.allowsMessageContextMenu)
+        #expect(!mode.allowsMediaContextMenu)
+        #expect(!MessageReplyPresentationPolicy.allowsReplyAction(for: message))
+        #expect(!model.canDeleteMessage(message))
+        #expect(!model.canManagePins(for: message))
+        #expect(!message.isForwardable)
+        #expect(canvas.accessibilityMessageActions(row, rowFrame: canvas.bounds, rowIndex: 0).isEmpty)
+    }
+}

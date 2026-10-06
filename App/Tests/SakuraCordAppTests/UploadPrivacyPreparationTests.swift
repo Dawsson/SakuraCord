@@ -122,6 +122,12 @@ struct UploadPrivacyPreparationTests {
         #expect((body.range(of: Data("Private Camera Owner".utf8)) == nil) == enabled)
         if !enabled { #expect(body.range(of: original) != nil) }
         #expect(try Data(contentsOf: source) == original)
+
+        let reports = IssueReportStore()
+        await reports.addAttachments([source], using: privacy)
+        let reportUpload = try #require(reports.draft.attachments.first?.upload.data)
+        #expect((reportUpload.range(of: Data("Private Camera Owner".utf8)) == nil) == enabled)
+        #expect(try Data(contentsOf: source) == original)
     }
 }
 

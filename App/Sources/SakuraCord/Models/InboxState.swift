@@ -18,8 +18,25 @@ nonisolated struct InboxUnreadGroup: Equatable, Identifiable, Sendable {
     var messages: [Message] = []
     var forumPosts: [ForumPost] = []
     var isLoaded = false
+    /// Loaded content stays visible while an explicit refresh replaces it.
+    var needsRevalidation = false
     var isCollapsed = false
     var errorMessage: String?
+
+    /// Whether retained content still describes the same unread range.
+    func canReuseContent(of retained: Self) -> Bool {
+        retained.isLoaded && retained.errorMessage == nil && !isAgeRestricted
+            && retained.isEvents == isEvents && retained.isForum == isForum
+            && retained.oldestReadMessageID == oldestReadMessageID
+            && retained.newestUnreadMessageID == newestUnreadMessageID
+    }
+}
+
+/// A collapse change made in this window that Discord has not yet confirmed.
+nonisolated struct InboxCollapseIntent: Equatable, Sendable {
+    let isCollapsed: Bool
+    let guildID: GuildID?
+    let isEvents: Bool
 }
 
 @MainActor
@@ -41,6 +58,10 @@ final class InboxState {
     @ObservationIgnored var locallyUndoneEventGuilds: Set<GuildID> = []
     @ObservationIgnored var eventInterestTasks: [ScheduledEventID: Task<Void, Never>] = [:]
     var mentions: [Message] = []
+    /// The filter `mentions` was fetched with; a different filter starts over.
+    @ObservationIgnored var mentionsQuery: InboxMentionQuery?
+    var hasMoreMentions = false
+    @ObservationIgnored var needsMentionRevalidation = false
     var hiddenMentionIDs: Set<MessageID> = []
     var obscuredMentionIDs: Set<MessageID> = []
     var visibleMentions: [Message] { mentions.filter { !hiddenMentionIDs.contains($0.id) } }
@@ -50,9 +71,17 @@ final class InboxState {
     @ObservationIgnored var unreadOrder: [ChannelID] = []
     @ObservationIgnored var pendingReadGroups: [ChannelID: InboxUnreadGroup] = [:]
     var isLoading = false
-    var hasMore = false
+    /// Set only by an explicit refresh, so background revalidation stays quiet.
+    var isRefreshing = false
+    var hasMore: Bool {
+        tab == .mentions ? hasMoreMentions
+            : groups.contains { ($0.needsRevalidation || !$0.isLoaded) && !$0.isCollapsed }
+    }
     var errorMessage: String?
-    var isSavingSettings = false
+    // Local choices win over remote echoes until their own save settles.
+    @ObservationIgnored var pendingTab: InboxTab?
+    @ObservationIgnored var pendingCollapse: [ChannelID: InboxCollapseIntent] = [:]
+    @ObservationIgnored var settingsSyncTask: Task<Void, Never>?
     var dismissingIDs: Set<MessageID> = []
     @ObservationIgnored var rows: [MessageRowPresentation] = []
     @ObservationIgnored var rowsRevision: UInt64 = 0
@@ -60,15 +89,55 @@ final class InboxState {
     @ObservationIgnored var loadTask: Task<Void, Never>?
     @ObservationIgnored var generation: UInt64 = 0
     @ObservationIgnored var nextBefore: MessageID?
-    // Tombstones and Gateway replacements win over an older in-flight page.
+    // Tombstones and the shared journal win over an older in-flight page.
     @ObservationIgnored var removedIDs: Set<MessageID> = []
     @ObservationIgnored var deletedIDs: Set<MessageID> = []
-    @ObservationIgnored var replacements: [MessageID: Message] = [:]
+    @ObservationIgnored var refreshJournal: ConversationRefreshJournal?
     @ObservationIgnored var metadataTasks: [ChannelID: Task<Void, Never>] = [:]
     @ObservationIgnored var mutationTasks: [MessageID: Task<Void, Never>] = [:]
-    @ObservationIgnored var settingsSaveID = UUID()
     @ObservationIgnored var settingsTask: Task<Void, Never>?
     @ObservationIgnored var bulkTask: Task<Void, Never>?
+
+    var retainedMessages: some Sequence<Message> {
+        ([mentions] + groups.map(\.messages) + undoGroups.map(\.messages)
+            + pendingReadGroups.values.map(\.messages)).joined()
+    }
+
+    /// Update every retained copy; report whether visible rows need publication.
+    @discardableResult
+    func replaceRetainedMessage(_ id: MessageID, with replacement: Message?) -> Bool {
+        func updatedMessages(_ messages: [Message]) -> [Message]? {
+            guard let index = messages.firstIndex(where: { $0.id == id }) else { return nil }
+            if let replacement, messages[index] == replacement { return nil }
+            var updated = messages
+            if let replacement {
+                updated[index] = replacement
+            } else { updated.remove(at: index) }
+            return updated
+        }
+        var visibleChanged = false
+        if let updated = updatedMessages(mentions) {
+            mentions = updated
+            visibleChanged = true
+        }
+        for index in groups.indices {
+            if let updated = updatedMessages(groups[index].messages) {
+                groups[index].messages = updated
+                visibleChanged = true
+            }
+        }
+        for index in undoGroups.indices {
+            if let updated = updatedMessages(undoGroups[index].messages) {
+                undoGroups[index].messages = updated
+            }
+        }
+        for id in pendingReadGroups.keys {
+            guard var group = pendingReadGroups[id], let updated = updatedMessages(group.messages) else { continue }
+            group.messages = updated
+            pendingReadGroups[id] = group
+        }
+        return visibleChanged
+    }
 
     func rowInputs(channels: [Channel], guilds: [Guild]) -> [InboxMessageRowInput] {
         var messages = visibleMentions
@@ -121,6 +190,7 @@ final class InboxState {
         loadTask = nil
         generation &+= 1
         isLoading = false
+        refreshJournal = nil
     }
 
     func clear(notifying model: AnyObject) {
@@ -131,6 +201,10 @@ final class InboxState {
         mutationTasks = [:]
         settingsTask?.cancel()
         settingsTask = nil
+        settingsSyncTask?.cancel()
+        settingsSyncTask = nil
+        pendingTab = nil
+        pendingCollapse = [:]
         bulkTask?.cancel()
         bulkTask = nil
         isPresented = false
@@ -149,6 +223,9 @@ final class InboxState {
         pendingEventAcknowledgements = [:]
         locallyUndoneEventGuilds = []
         mentions = []
+        mentionsQuery = nil
+        hasMoreMentions = false
+        needsMentionRevalidation = false
         hiddenMentionIDs = []
         obscuredMentionIDs = []
         threads = [:]
@@ -157,13 +234,11 @@ final class InboxState {
         unreadOrder = []
         pendingReadGroups = [:]
         nextBefore = nil
-        hasMore = false
         errorMessage = nil
-        isSavingSettings = false
+        isRefreshing = false
         dismissingIDs = []
         removedIDs = []
         deletedIDs = []
-        replacements = [:]
         publish(channels: [], guilds: [], notifying: model)
     }
 }

@@ -343,7 +343,7 @@ extension DiscordRESTProvider {
     ) async throws -> (Data, HTTPURLResponse) {
         guard !requestSafetyCircuitIsOpen else {
             throw ChatProviderError.invalidRequest(
-                "Discord networking was stopped for this session after an authentication or permission response. Restart only after checking the account status."
+                requestSafetyStopReason
             )
         }
 
@@ -429,7 +429,7 @@ extension DiscordRESTProvider {
             // have opened the safety circuit while this one was suspended.
             guard !requestSafetyCircuitIsOpen else {
                 throw ChatProviderError.invalidRequest(
-                    "Discord networking is stopped for this session.")
+                    requestSafetyStopReason)
             }
             request.setValue(token, forHTTPHeaderField: "Authorization")
             try clientMetadata.apply(to: &request, clientAppState: clientAppState)
@@ -667,7 +667,7 @@ extension DiscordRESTProvider {
                     if unexpectedNotFoundCounts[route, default: 0] >= 2 {
                         await openSafetyCircuit(status: 404, discordCode: discordCode, route: route)
                         throw apiDiagnostics.coalescing(ChatProviderError.invalidRequest(
-                            "Discord networking was stopped after this route repeatedly returned an unexpected not-found response."
+                            requestSafetyStopReason
                         ), with: response)
                     }
                 }
@@ -698,7 +698,7 @@ extension DiscordRESTProvider {
             try Task.checkCancellation()
             guard !requestSafetyCircuitIsOpen else {
                 throw ChatProviderError.invalidRequest(
-                    "Discord networking is stopped for this session."
+                    requestSafetyStopReason
                 )
             }
             let now = Date.now
@@ -932,6 +932,9 @@ extension DiscordRESTProvider {
 
     func openSafetyCircuit(status: Int, discordCode: Int?, route: String) async {
         guard !requestSafetyCircuitIsOpen else { return }
+        requestSafetyStopReason = status == 404
+            ? "Discord networking was stopped after repeated unexpected not-found responses from \(route) (HTTP 404)."
+            : Self.safetyStopMessage(status: status, discordCode: discordCode)
         requestSafetyCircuitIsOpen = true
         let authenticationFailure = Self.isAuthenticationFailure(
             status: status,
@@ -1012,6 +1015,8 @@ extension DiscordRESTProvider {
         if method == "GET" || method == "POST", inviteParts.count == 2, inviteParts[0] == "invites" { return true }
         guard method == "GET" else { return false }
         let segments = path.split(separator: "/")
+        if segments.count == 3, segments[0] == "channels", UInt64(segments[1]) != nil,
+           segments[2] == "application-command-index" { return true }
         return segments.count == 3
             && segments[0] == "users"
             && UInt64(segments[1]) != nil
@@ -1087,7 +1092,7 @@ extension DiscordRESTProvider {
     func authorizationToken() async throws -> String {
         guard !requestSafetyCircuitIsOpen else {
             throw ChatProviderError.invalidRequest(
-                "Discord networking is stopped for this session."
+                requestSafetyStopReason
             )
         }
         if let authorizationValue {
@@ -1097,7 +1102,7 @@ extension DiscordRESTProvider {
         defer { credential.resetBytes(in: credential.indices) }
         guard !requestSafetyCircuitIsOpen else {
             throw ChatProviderError.invalidRequest(
-                "Discord networking is stopped for this session."
+                requestSafetyStopReason
             )
         }
         guard let value = String(data: credential, encoding: .utf8) else {

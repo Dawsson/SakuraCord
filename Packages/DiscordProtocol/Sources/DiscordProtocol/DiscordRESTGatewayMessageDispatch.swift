@@ -89,6 +89,13 @@ extension DiscordRESTProvider {
         {
             // A newly created poll starts empty; historical omitted results remain unknown.
             if message.poll != nil, message.poll?.results == nil { message.poll?.results = PollResults() }
+            // Ephemeral interaction responses can omit guild_id; their channel
+            // still identifies the guild that later component actions need.
+            if message.guildID == nil {
+                message.guildID = cachedJoinedThreads[message.channelID]?.guildID
+                    ?? cachedChannels.values.lazy.flatMap(\.self)
+                    .first { $0.id == message.channelID }?.guildID
+            }
             attachKnownThread(to: &message)
             cacheMessageSearchUsers(dto.searchIndexUsers)
             cacheForwardSearchMessageAliases([message])

@@ -2378,6 +2378,37 @@ struct AccountReadStateModelTests {
 }
 
 @MainActor
+@Test(arguments: [false, true])
+func `bulk Inbox acknowledgement preserves notifications beyond its captured boundary`(receivesNewerMessage: Bool) async throws {
+    let provider = MockChatProvider()
+    let service = RecordingNotificationService()
+    let model = AppModel(launchMode: .offlineTesting, provider: provider, notificationService: service,
+        notificationPreferences: NotificationPreferences(defaults: InMemoryPreferences()))
+    await model.start()
+    let channelID = ChannelID(rawValue: 211)
+    let guildID = GuildID(rawValue: 100)
+    let boundary = MessageID(rawValue: UInt64.max - 20)
+    let sender = User(id: UserID(rawValue: 2), username: "sender", displayName: "Sender")
+    let user = try #require(model.currentUser)
+    model.consumeImmediately(.messageCreated(Message(id: boundary, channelID: channelID,
+        author: sender, content: "Captured mention", guildID: guildID, mentionedUsers: [user])))
+    model.inbox.isPresented = true
+    model.inbox.groups = [InboxUnreadGroup(channelID: channelID, guildID: guildID,
+        title: "Captured", subtitle: nil, oldestReadMessageID: MessageID(rawValue: 2100),
+        newestUnreadMessageID: boundary, mentionCount: 1, isLoaded: true)]
+    model.markAllInboxRead()
+    if receivesNewerMessage {
+        model.consumeImmediately(.messageCreated(Message(id: MessageID(rawValue: boundary.rawValue + 1), channelID: channelID,
+            author: sender, content: "Newer mention", guildID: guildID, mentionedUsers: [user])))
+    }
+    await model.inbox.bulkTask?.value
+    for task in Array(model.accountChildTasks.values) { await task.value }
+    #expect(model.readState.entries[channelID]?.isUnread == receivesNewerMessage)
+    #expect(service.cancelledChannelIDs.contains(channelID) == !receivesNewerMessage)
+    #expect(await provider.bulkAcknowledgementRequests.last?.first?.messageID == boundary)
+}
+
+@MainActor
 @Test func `notification privacy and deep links are deterministic`() throws {
     let message = Message(
         id: MessageID(rawValue: 9),
@@ -2429,6 +2460,70 @@ struct AccountReadStateModelTests {
 @MainActor
 @Test func `qualified read acknowledgements have no arbitrary delay`() {
     #expect(AppModel.ReadAcknowledgementTiming().debounce == .zero)
+}
+
+@MainActor
+@Test(arguments: [GuildWorkspacePage.guide, .channelsAndRoles])
+func `guild pages do not acknowledge the hidden selected conversation`(page: GuildWorkspacePage) async throws {
+    let provider = MockChatProvider()
+    let model = AppModel(launchMode: .offlineTesting, provider: provider)
+    await model.start()
+    let channelID = ChannelID(rawValue: 210)
+    let guildID = GuildID(rawValue: 100)
+    model.selectedChannelID = channelID
+    await model.channelLoadTask?.value
+    let guildIndex = try #require(model.snapshot?.guilds.firstIndex { $0.id == guildID })
+    let resourceIndex = try #require(model.snapshot?.channels.firstIndex { $0.id == ChannelID(rawValue: 200) })
+    model.snapshot?.guilds[guildIndex].features = ["COMMUNITY", "GUILD_ONBOARDING", "GUILD_SERVER_GUIDE"]
+    model.serverRailGuildsByID[guildID]?.features = ["COMMUNITY", "GUILD_ONBOARDING", "GUILD_SERVER_GUIDE"]
+    model.snapshot?.channels[resourceIndex].flags = 128
+    var member = Member(user: try #require(model.currentUser), roleName: "", isOnline: true)
+    member.flags = 98
+    model.onboarding.members[guildID] = member
+    model.featuresSettings.channelManagement = true
+    model.reportMainWindowActive(true)
+    model.reportTimelineInitialPosition(channelID: channelID, hasReachedReadBoundary: true)
+    await model.acknowledgementTasks[channelID]?.value
+    await model.acknowledgementProcessorTask?.value
+    let previousRequests = await provider.acknowledgementRequests.count
+    let acknowledged = model.readState.entries[channelID]?.lastAcknowledgedMessageID
+
+    if page == .guide { model.openGuildGuide(in: guildID) }
+    else { model.openChannelsAndRoles(in: guildID) }
+    #expect(model.guildWorkspacePage == page)
+    #expect(model.readState.presentations[channelID]?.isPresented == false)
+    let incoming = Message(id: MessageID(rawValue: UInt64.max - 5), channelID: channelID,
+        author: User(id: UserID(rawValue: 2), username: "sender", displayName: "Sender"),
+        content: "Arrived behind the guild page", guildID: guildID)
+    model.consumeImmediately(.messageCreated(incoming))
+    // A late load, old viewport callback, reconnect, or window activation must
+    // not restore the presentation of a conversation hidden by a guild page.
+    model.reportConversationHistoryLoaded(channelID: channelID)
+    model.reportTimelineInitialPosition(channelID: channelID, hasReachedReadBoundary: true)
+    model.consumeReadStateSnapshot([ChannelReadState(channelID: channelID,
+        lastAcknowledgedMessageID: acknowledged)], version: nil)
+    model.reportMainWindowActive(false)
+    model.reportMainWindowActive(true)
+    await model.acknowledgementTasks[channelID]?.value
+    await model.acknowledgementProcessorTask?.value
+    #expect(await provider.acknowledgementRequests.count == previousRequests)
+    #expect(model.readState.entries[channelID]?.isUnread == true)
+    #expect(model.readState.presentations[channelID]?.isPresented == false)
+
+    model.channelSidebarSelection = channelID
+    model.reportTimelineInitialPosition(channelID: channelID, hasReachedReadBoundary: true)
+    await model.acknowledgementTasks[channelID]?.value
+    await model.acknowledgementProcessorTask?.value
+    #expect(await provider.acknowledgementRequests.last?.messageID == incoming.id)
+    #expect(await provider.acknowledgementRequests.count == previousRequests + 1)
+    if page == .channelsAndRoles {
+        model.openChannelsAndRoles(in: guildID)
+        model.openCustomizationPreview(try #require(model.selectedChannel))
+        model.reportTimelineInitialPosition(channelID: channelID, hasReachedReadBoundary: true)
+        model.closeCustomizationPreview()
+        #expect(model.readState.presentations[channelID]?.isPresented == false)
+        #expect(model.readState.presentations[channelID]?.initialPositionEstablished == false)
+    }
 }
 
 @MainActor

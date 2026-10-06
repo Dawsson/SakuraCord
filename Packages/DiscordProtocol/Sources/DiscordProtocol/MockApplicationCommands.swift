@@ -39,6 +39,7 @@ enum MockApplicationCommands {
         )
         let context = CommandContext(guildID: guildID, application: application)
         let commands = primaryCommands(context) + responseCommands(context)
+            + formCommands(context) + contextMenuCommands(context)
         return ApplicationCommandCatalog(
             target: target,
             version: "offline-1",
@@ -190,6 +191,38 @@ enum MockApplicationCommands {
         }
     }
 
+    private static func formCommands(_ context: CommandContext) -> [ApplicationCommand] {
+        [
+            command(
+                context, id: "900000000000000208", name: "form",
+                description: "Open a synthetic form with every control", rank: 8
+            ) { prefix in
+                [
+                    option(
+                        "layout", .string, description: "Form layout", prefix: prefix,
+                        constraints: .init(choices: [
+                            ApplicationCommandChoice(name: "Modern labels", value: .string("modern")),
+                            ApplicationCommandChoice(name: "Legacy rows", value: .string("legacy")),
+                        ])
+                    )
+                ]
+            }
+        ]
+    }
+
+    private static func contextMenuCommands(_ context: CommandContext) -> [ApplicationCommand] {
+        [
+            command(
+                context, id: "900000000000000209", name: "Inspect User",
+                description: "", rank: 30, type: .user
+            ) { _ in [] },
+            command(
+                context, id: "900000000000000210", name: "Inspect Message",
+                description: "", rank: 31, type: .message
+            ) { _ in [] },
+        ]
+    }
+
     private static func option(
         _ name: String,
         _ type: ApplicationCommandOptionType,
@@ -220,6 +253,7 @@ enum MockApplicationCommands {
         description: String,
         rank: Int,
         path: [ApplicationCommandPathComponent] = [],
+        type: ApplicationCommandType = .chatInput,
         options: (String) -> [ApplicationCommandOption]
     ) -> ApplicationCommand {
         let rootJSON: Data
@@ -229,7 +263,7 @@ enum MockApplicationCommands {
                     "id": id,
                     "application_id": applicationID,
                     "version": "\(id)1",
-                    "type": 1,
+                    "type": type.rawValue,
                     "name": name,
                     "description": description,
                     "options": [],
@@ -246,6 +280,7 @@ enum MockApplicationCommands {
             applicationID: applicationID,
             guildID: context.guildID,
             version: "\(id)1",
+            type: type,
             name: name,
             description: description,
             application: context.application,

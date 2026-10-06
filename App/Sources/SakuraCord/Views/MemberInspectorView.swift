@@ -69,7 +69,7 @@ struct MemberInspectorView: View {
     let updateViewport: (ClosedRange<Int>) -> Void
     var contextMenu: ((Member) -> NSMenu)?
     var openProfile: ((ProfilePresentationState) -> Void)?
-    var sendProfileMessage: ((UserID, String) async -> Bool)?
+    var sendProfileMessage: ((UserID, String, String) async -> Bool)?
     var presentation = NativeMemberListPresentation()
 
     init(
@@ -83,7 +83,7 @@ struct MemberInspectorView: View {
         presentation: NativeMemberListPresentation = .init(),
         openProfile: ((ProfilePresentationState) -> Void)? = nil,
         contextMenu: ((Member) -> NSMenu)? = nil,
-        sendProfileMessage: ((UserID, String) async -> Bool)? = nil,
+        sendProfileMessage: ((UserID, String, String) async -> Bool)? = nil,
         updateViewport: @escaping (ClosedRange<Int>) -> Void = { _ in }
     ) {
         self.sections = sections

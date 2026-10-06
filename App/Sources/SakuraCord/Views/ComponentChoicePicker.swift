@@ -15,12 +15,10 @@ struct ComponentChoicePicker: View {
     private let selectKind: ComponentSelectKind
     private let options: [ComponentSelectOption]
     private let initialOptions: [ComponentSelectOption]
-    private let minimumSelectionCount: Int
     private let maximumSelectionCount: Int
     private let loader: Loader
     private let selectionChanged: ([ComponentSelectOption]) -> Void
-    private let submitSelection: ([String]) -> Void
-    private let dismiss: () -> Void
+    private let complete: ([String], SelectionFieldCompletion) -> Void
 
     init(
         placeholder: String,
@@ -29,24 +27,20 @@ struct ComponentChoicePicker: View {
         options: [ComponentSelectOption],
         initialOptions: [ComponentSelectOption],
         selectedOptions: [ComponentSelectOption]?,
-        minimumSelectionCount: Int,
         maximumSelectionCount: Int,
         loader: @escaping Loader,
         selectionChanged: @escaping ([ComponentSelectOption]) -> Void,
-        submitSelection: @escaping ([String]) -> Void,
-        dismiss: @escaping () -> Void
+        complete: @escaping ([String], SelectionFieldCompletion) -> Void
     ) {
         self.resultPlacement = resultPlacement
         self.placeholder = placeholder
         self.selectKind = selectKind
         self.options = options
         self.initialOptions = initialOptions
-        self.minimumSelectionCount = minimumSelectionCount
         self.maximumSelectionCount = max(1, maximumSelectionCount)
         self.loader = loader
         self.selectionChanged = selectionChanged
-        self.submitSelection = submitSelection
-        self.dismiss = dismiss
+        self.complete = complete
         let initiallySelected = selectedOptions
             ?? options.filter(\.isDefault)
         _selection = State(
@@ -70,7 +64,6 @@ struct ComponentChoicePicker: View {
             mode: selectionMode,
             source: source,
             configuration: SelectionFieldConfiguration(
-                minimumSelectionCount: minimumSelectionCount,
                 placeholder: placeholder,
                 searchPlaceholder: "Search options",
                 maximumListHeight: 232,
@@ -79,8 +72,7 @@ struct ComponentChoicePicker: View {
                 resultPlacement: resultPlacement
             ),
             accessibilityIdentifier: "component-selection-field",
-            onDismiss: dismiss,
-            onConfirm: { submitSelection(selection) }
+            onComplete: { complete(selection, $0) }
         )
         .frame(maxWidth: .infinity)
     }
@@ -273,8 +265,7 @@ enum ComponentChoiceOptionPresentation {
             options: options.map {
                 fieldOption($0, selectKind: selectKind)
             },
-            width: fieldWidth,
-            usesCards: true
+            width: fieldWidth
         )
     }
 }

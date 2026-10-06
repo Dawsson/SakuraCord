@@ -10,6 +10,7 @@ struct PollVotersView: View {
     @State private var pages: [Int: VoterPage] = [:]
     @State private var errors: [Int: String] = [:]
     @State private var loadingAnswerIDs: Set<Int> = []
+    @State private var pendingRefreshAnswerIDs: Set<Int> = []
 
     private struct VoterPage {
         var users: [User]
@@ -30,7 +31,7 @@ struct PollVotersView: View {
     }
 
     private var poll: MessagePoll? {
-        model.messageInWorkspace(channelID: message.channelID, messageID: message.id)?.poll ?? message.poll
+        model.retainedMessage(channelID: message.channelID, messageID: message.id)?.poll ?? message.poll
     }
 
     var body: some View {
@@ -82,13 +83,23 @@ struct PollVotersView: View {
         let answerID = selectedAnswerID
         let page = pages[answerID]
         let voters = displayedUsers(page?.users ?? [])
+        let guildID = model.messagePresentationGuildID(for: message)
         return ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 2) {
                 ForEach(voters) { user in
-                    PollVoterRow(model: model, user: user)
+                    PollVoterRow(model: model, user: user, guildID: guildID)
                 }
-                if let page, page.hasMore {
+                if let page, let error = errors[answerID] {
+                    VStack(spacing: 6) {
+                        Text(error).font(.caption).foregroundStyle(.secondary)
+                        Button("Try Again") {
+                            load(answerID, after: page.count == count(for: answerID) ? page.users.last?.id : nil)
+                        }
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 8)
+                } else if let page, page.hasMore {
                     ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 8)
+                        .id(page.users.last?.id)
                         .onAppear { load(answerID, after: page.users.last?.id) }
                 }
             }
@@ -97,9 +108,7 @@ struct PollVotersView: View {
         .id(answerID)
         .scrollBounceBehavior(.basedOnSize)
         .overlay {
-            if !voters.isEmpty {
-                EmptyView()
-            } else if page == nil, let error = errors[answerID] {
+            if page == nil, let error = errors[answerID] {
                 ContentUnavailableView {
                     Label("Couldn't Load Voters", systemImage: "exclamationmark.triangle")
                 } description: {
@@ -107,6 +116,8 @@ struct PollVotersView: View {
                 } actions: {
                     Button("Try Again") { load(answerID, after: nil) }.buttonStyle(.glass)
                 }
+            } else if !voters.isEmpty {
+                EmptyView()
             } else if page == nil, count(for: answerID) != 0 {
                 ProgressView().controlSize(.small)
             } else {
@@ -147,11 +158,20 @@ struct PollVotersView: View {
     /// Like Discord, an answer's voters load when it is selected. Loads outlive
     /// answer switches, so a page started for one answer still fills its cache.
     private func load(_ answerID: Int, after: UserID?) {
-        guard loadingAnswerIDs.insert(answerID).inserted else { return }
+        guard loadingAnswerIDs.insert(answerID).inserted else {
+            if after == nil { pendingRefreshAnswerIDs.insert(answerID) }
+            return
+        }
+        errors[answerID] = nil
         let count = count(for: answerID)
         let session = model.accountSession()
         Task {
-            defer { loadingAnswerIDs.remove(answerID) }
+            defer {
+                loadingAnswerIDs.remove(answerID)
+                if pendingRefreshAnswerIDs.remove(answerID) != nil, model.isCurrentAccountSession(session) {
+                    load(answerID, after: nil)
+                }
+            }
             if count == 0 {
                 pages[answerID] = VoterPage(users: [], hasMore: false, count: 0)
                 return
@@ -216,9 +236,13 @@ private struct PollVotersAnswerRow: View {
 private struct PollVoterRow: View {
     let model: AppModel
     let user: User
+    let guildID: GuildID?
 
     var body: some View {
-        let member = model.membersByID[user.id]
+        let member = guildID.flatMap { guildID in
+            model.membersByGuildID[guildID]?[user.id]
+                ?? (guildID == model.selectedGuildID ? model.membersByID[user.id] : nil)
+        }
         let isCurrentUser = model.snapshot?.currentUser.id == user.id
         HStack(spacing: 10) {
             AvatarView(name: user.displayName, url: member?.guildAvatarURL ?? user.avatarURL, size: 32)

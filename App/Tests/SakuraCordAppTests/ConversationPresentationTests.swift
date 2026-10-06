@@ -495,3 +495,31 @@ func `server verification blocks sends without exposing hidden channels`(state: 
         currentUserIsPending: state == "screening", currentUserRequiresOnboarding: state == "onboarding")
     #expect(AppModel.resolveConversationAccess(for: channel, permissionBasis: basis) == .hidden)
 }
+
+@MainActor @Test func `webhook profiles remain scoped to each message instead of cached members`() throws {
+    let model = AppModel(launchMode: .offlineTesting)
+    let user = User(id: UserID(rawValue: 300), username: "First persona", discriminator: "0000", displayName: "First persona", isBot: true)
+    var first = Message(id: MessageID(rawValue: 100), channelID: ChannelID(rawValue: 200), author: user, webhookID: "300", content: "Test")
+    let stale = Member(user: User(id: user.id, username: "Cached", displayName: "Cached"), roleName: "Cached role", status: .online)
+    #expect(MessageAuthorPresentation.resolve(message: first, member: stale, roles: []).user == user)
+    model.showProfile(for: user, sourceMessage: first)
+    let initial = try #require(model.liveProfilePresentation(for: .contextual))
+    #expect(initial.isWebhook && !initial.isLoading && initial.errorMessage == nil)
+    #expect(model.contextualProfileTask == nil)
+    first.author.displayName = "Second persona"
+    first.author.avatarURL = URL(string: "https://cdn.discordapp.com/avatars/300/second.png")
+    model.showProfile(for: first.author, sourceMessage: first)
+    let second = try #require(model.liveProfilePresentation(for: .contextual))
+    #expect(second.member.user == first.author)
+    #expect(second.profile?.avatarURL == first.author.avatarURL)
+    #expect(second.requestID != initial.requestID)
+    #expect(model.profileCache.isEmpty)
+    first.author.avatarURL = URL(string: "https://cdn.discordapp.com/avatars/300/ready.png")
+    model.consumeMessageUpdated(first, preparedTextPlan: nil)
+    let refreshed = try #require(model.liveProfilePresentation(for: .contextual))
+    #expect(refreshed.requestID == second.requestID)
+    #expect(refreshed.profile?.avatarURL == first.author.avatarURL)
+    let other = Message(id: MessageID(rawValue: 101), channelID: first.channelID, author: user, webhookID: "300", content: "Other persona")
+    model.consumeMessageUpdated(other, preparedTextPlan: nil)
+    #expect(model.liveProfilePresentation(for: .contextual)?.member.user == first.author)
+}

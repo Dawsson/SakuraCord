@@ -127,17 +127,4 @@ public extension DiscordRESTProvider {
         return settings
     }
 
-    func setGuildChannelSelected(_ selected: Bool, channelID: ChannelID, guildID: GuildID) async throws {
-        let flags = cachedGuildNotificationSettings[guildID]?.channelOverrides.first { $0.channelID == channelID }?.flags ?? 0
-        let updated = selected ? flags | GuildChannelSelection.selectedFlag : flags & ~(GuildChannelSelection.selectedFlag | GuildChannelSelection.favoriteFlag)
-        try await updateGuildNotificationSettings(guildID: guildID, settings: [
-            "channel_overrides": .object([channelID.description: .object(["flags": .number(Double(updated))])])
-        ])
-    }
-
-    func setGuildChannelSelectionEnabled(_ enabled: Bool, guildID: GuildID) async throws {
-        let flags = cachedGuildNotificationSettings[guildID]?.flags ?? 0
-        let updated = enabled ? flags | GuildChannelSelection.enabledFlag : flags & ~GuildChannelSelection.enabledFlag
-        try await updateGuildNotificationSettings(guildID: guildID, settings: ["flags": .number(Double(updated))])
-    }
 }

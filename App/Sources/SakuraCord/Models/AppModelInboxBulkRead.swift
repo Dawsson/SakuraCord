@@ -55,7 +55,9 @@ extension AppModel {
                 guard isCurrentAccountSession(session) else { return }
                 for target in targets where target.readStateType == 0 {
                     readState.completeAcknowledgement(channelID: target.channelID, messageID: target.messageID, token: nil)
-                    cancelNativeNotifications(channelID: target.channelID)
+                    if readState.entries[target.channelID]?.isUnread != true {
+                        cancelNativeNotifications(channelID: target.channelID)
+                    }
                 }
             } catch let partial as PartialBulkReadAcknowledgementError {
                 guard isCurrentAccountSession(session) else { return }
@@ -68,7 +70,6 @@ extension AppModel {
                 for target in targets where target.readStateType == 0 { readState.failAcknowledgement(channelID: target.channelID, messageID: target.messageID) }
                 inbox.errorMessage = error.localizedDescription
             }
-            guard isCurrentAccountSession(session) else { return }
             for group in groups where group.isEvents {
                 if let guildID = group.guildID,
                    inbox.pendingEventAcknowledgements[guildID]?.rawValue == group.newestUnreadMessageID.rawValue {

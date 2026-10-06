@@ -661,8 +661,7 @@ extension NativeTimelineRowPainter {
             guard target != input.activeComponentChoiceTarget else { continue }
             componentSelect(
                 region,
-                cornerRadius: bubbleConcentricCornerRadius(for: region.frame, in: input.bubbleRegion, fallback: 11),
-                isExpanded: target == input.activeComponentChoiceTarget
+                cornerRadius: bubbleConcentricCornerRadius(for: region.frame, in: input.bubbleRegion, fallback: 11)
             )
         }
     }
@@ -1166,7 +1165,7 @@ extension NativeTimelineRowPainter {
                 isHovered: isHovered,
                 pressProgress: pressProgress
             )
-        let opacity: CGFloat = region.isDisabled ? 0.65 : 1
+        let opacity: CGFloat = region.isDisabled && !region.isLoading ? 0.65 : 1
         let background = adjustedBrightness(
             roleColor(
                 DiscordComponentButtonAppearance.backgroundHex(
@@ -1224,6 +1223,8 @@ extension NativeTimelineRowPainter {
         brightness: CGFloat,
         opacity: CGFloat
     ) {
+        // The row's loading-dots overlay replaces the label.
+        guard !region.isLoading else { return }
         var horizontalPosition = region.frame.minX + 12
         if let emoji = region.emoji {
             componentEmoji(emoji, in: CGRect(
@@ -1305,8 +1306,7 @@ extension NativeTimelineRowPainter {
 
     static func componentSelect(
         _ region: NativeTimelineComponentLayout.SelectRegion,
-        cornerRadius: CGFloat = 11,
-        isExpanded: Bool = false
+        cornerRadius: CGFloat = 11
     ) {
         let opacity: CGFloat = region.isDisabled ? 0.65 : 1
         NSColor.labelColor.withAlphaComponent(0.075 * opacity).setFill()
@@ -1314,7 +1314,8 @@ extension NativeTimelineRowPainter {
             concentricRoundedRect: region.frame,
             cornerRadius: cornerRadius
         ).fill()
-        NSColor.labelColor.withAlphaComponent(0.10 * opacity).setStroke()
+        // The open field's resting border.
+        NSColor.labelColor.withAlphaComponent(0.16 * opacity).setStroke()
         let border = NSBezierPath(
             concentricRoundedRect: region.frame.insetBy(dx: 0.5, dy: 0.5),
             cornerRadius: max(0, cornerRadius - 0.5)
@@ -1329,10 +1330,10 @@ extension NativeTimelineRowPainter {
             )
         }
         if options.isEmpty {
-            SelectionFieldChromeRenderer.drawText(
+            SelectionFieldRenderer.drawText(
                 region.placeholder,
                 in: region.frame,
-                color: .placeholderTextColor,
+                color: .secondaryLabelColor,
                 opacity: opacity
             )
         } else {
@@ -1342,11 +1343,12 @@ extension NativeTimelineRowPainter {
                 opacity: opacity
             )
         }
-        SelectionFieldChromeRenderer.drawChevron(
-            isExpanded: isExpanded,
-            in: region.frame,
-            opacity: opacity
-        )
+        if !region.isLoading {
+            SelectionFieldRenderer.drawChevron(
+                in: region.frame,
+                opacity: opacity
+            )
+        }
     }
 
     static func componentSelectTokens(
@@ -1355,24 +1357,29 @@ extension NativeTimelineRowPainter {
         opacity: CGFloat
     ) {
         let available = max(40, frame.width - 50)
-        var origin = CGPoint(x: frame.minX + 11, y: frame.minY + 7)
+        var origin = CGPoint(x: frame.minX + 11, y: 0)
+        var placements: [(option: SelectionFieldOption<String>, frame: CGRect)] = []
         for option in options {
             let tokenWidth = SelectionFieldLayoutMetrics.tokenWidth(option, availableWidth: available)
             if origin.x > frame.minX + 11, origin.x + tokenWidth > frame.minX + 11 + available {
                 origin.x = frame.minX + 11
                 origin.y += 34
             }
-            let image = SelectionFieldTokenRenderer.images(
-                option: option, font: SelectionFieldLayoutMetrics.font, usesCard: true,
-                leadingImage: componentSelectLeadingImage(option.leading), maximumWidth: tokenWidth
-            ).normal
-            image.draw(
-                in: CGRect(origin: origin, size: image.size),
-                from: .zero, operation: .sourceOver, fraction: opacity, respectFlipped: true, hints: nil
-            )
+            placements.append((option, CGRect(origin: origin, size: CGSize(width: tokenWidth, height: 28))))
             origin.x += tokenWidth + 6
         }
-
+        // Like the open field, centre the token rows within its minimum height.
+        let top = frame.minY + ((frame.height - (origin.y + 28)) / 2).rounded()
+        for placement in placements {
+            let image = SelectionFieldRenderer.tokenImage(
+                option: placement.option, font: SelectionFieldLayoutMetrics.font,
+                leadingImage: componentSelectLeadingImage(placement.option.leading), maximumWidth: placement.frame.width
+            )
+            image.draw(
+                in: CGRect(origin: CGPoint(x: placement.frame.minX, y: top + placement.frame.minY), size: image.size),
+                from: .zero, operation: .sourceOver, fraction: opacity, respectFlipped: true, hints: nil
+            )
+        }
     }
 
     static func componentSelectLeadingImage(

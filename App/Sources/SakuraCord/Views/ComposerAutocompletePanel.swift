@@ -9,25 +9,36 @@ struct EmojiAutocompleteList: View {
     let highlight: (Int) -> Void
     let select: (ColonAutocompleteSuggestion) -> Void
 
+    var cornerRadius: CGFloat = ChatChromeMetrics.composerCornerRadius
+    var keyboardSelectionRevision = 0
+
     var body: some View {
-        ComposerAutocompletePanel(heading: "EMOJIS", count: suggestions.count) {
-            LazyVStack(spacing: 2) {
-                ForEach(suggestions.enumerated(), id: \.element.id) { index, suggestion in
+        ComposerAutocompletePanel(heading: "EMOJIS", cornerRadius: cornerRadius) {
+            ComposerSuggestionList(
+                rows: suggestions,
+                selectedID: suggestions.indices.contains(selectedIndex) ? suggestions[selectedIndex].id : nil,
+                keyboardSelectionRevision: keyboardSelectionRevision,
+                rowHeight: { _ in 42 },
+                highlight: { row in
+                    if let index = suggestions.firstIndex(where: { $0.id == row.id }), index != selectedIndex { highlight(index) }
+                },
+                activate: select,
+                content: { suggestion in
                     EmojiAutocompleteRow(
                         suggestion: suggestion,
-                        isSelected: index == selectedIndex,
+                        isSelected: suggestions.indices.contains(selectedIndex) && suggestions[selectedIndex].id == suggestion.id,
                         select: { select(suggestion) },
-                        highlight: { highlight(index) }
+                        cornerRadius: max(0, cornerRadius - 6)
                     )
                 }
-            }
+            )
         }
     }
 }
 
 struct ComposerAutocompletePanel<Content: View>: View {
     let heading: String
-    let count: Int
+    var cornerRadius: CGFloat = ChatChromeMetrics.composerCornerRadius
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -35,33 +46,12 @@ struct ComposerAutocompletePanel<Content: View>: View {
             Text(heading)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 14)
                 .padding(.top, 10)
                 .padding(.bottom, 5)
-            ScrollView {
-                content()
-                    .padding(.horizontal, 5)
-                    .padding(.bottom, 5)
-            }
-            .frame(height: min(340, CGFloat(max(1, count)) * 42))
+            content()
         }
         .frame(maxWidth: .infinity)
-        .glassEffect(
-            .regular.interactive(),
-            in: ConcentricRectangle(
-                corners: .concentric(
-                    minimum: .fixed(
-                        ChatChromeMetrics.composerMinimumCornerRadius
-                    )
-                ),
-                isUniform: true
-            )
-        )
-        .containerShape(
-            .rect(
-                cornerRadius: ChatChromeMetrics.composerMinimumCornerRadius,
-                style: .continuous
-            )
-        )
+        .commandPanelSurface(cornerRadius: cornerRadius)
     }
 }

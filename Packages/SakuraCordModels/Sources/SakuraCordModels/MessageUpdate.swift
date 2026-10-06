@@ -22,6 +22,7 @@ public struct MessageUpdate: Equatable, Sendable {
     public var mentionedRoleIDs: [RoleID]?
     public var mentionsEveryone: Bool?
     public var updatedUsers: [UserID: User] = [:]
+    public var webhookAuthor: User?
 
     public init(messageID: MessageID, channelID: ChannelID) {
         self.messageID = messageID
@@ -49,11 +50,15 @@ public struct MessageUpdate: Equatable, Sendable {
         mentionedRoleIDs = newer.mentionedRoleIDs ?? mentionedRoleIDs
         mentionsEveryone = newer.mentionsEveryone ?? mentionsEveryone
         updatedUsers.merge(newer.updatedUsers) { _, newer in newer }
+        webhookAuthor = newer.webhookAuthor ?? webhookAuthor
     }
 
     public func apply(to message: inout Message) {
         guard message.id == messageID, message.channelID == channelID else { return }
         for user in updatedUsers.values { message.applyIdentityUpdate(user) }
+        if let webhookAuthor, message.webhookID != nil, message.author.id == webhookAuthor.id {
+            message.author = webhookAuthor
+        }
         applyContent(to: &message)
         for update in pollUpdates { update.apply(to: &message) }
         if let thread { message.thread = thread }

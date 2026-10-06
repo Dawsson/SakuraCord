@@ -5,12 +5,13 @@ struct ApplicationCommandIndexDecoder {
     private struct ApplicationBotDTO: Decodable {
         var id: String
         var username: String
+        var discriminator: String?
         var globalName: String?
         var avatar: String?
         var bot: Bool?
 
         enum CodingKeys: String, CodingKey {
-            case id, username, avatar, bot
+            case id, username, discriminator, avatar, bot
             case globalName = "global_name"
         }
 
@@ -23,29 +24,44 @@ struct ApplicationCommandIndexDecoder {
                 )
             }
             return User(
-                id: id, username: username, displayName: globalName ?? username,
-                avatarURL: avatarURL, isBot: bot ?? true
+                id: id, username: username, discriminator: discriminator ?? "0", displayName: globalName ?? username,
+                avatarURL: avatarURL ?? DiscordProfileImageAssets.defaultAvatarURL(userID: id.description, discriminator: discriminator), isBot: bot ?? true
             )
         }
     }
 
-    private struct Envelope: Decodable {
-        var applications: [JSONValue]
-        var applicationCommands: [JSONValue]
+    private struct Envelope {
+        var applications: [Any]
+        var applicationCommands: [Any]
         var version: StringOrInteger
 
-        enum CodingKeys: String, CodingKey {
-            case applications
-            case applicationCommands = "application_commands"
-            case version
-        }
-
-        init(from decoder: Decoder) throws {
-            let values = try decoder.container(keyedBy: CodingKeys.self)
-            applications = try values.decodeIfPresent([JSONValue].self, forKey: .applications) ?? []
-            applicationCommands =
-                try values.decodeIfPresent([JSONValue].self, forKey: .applicationCommands) ?? []
-            version = try values.decodeIfPresent(StringOrInteger.self, forKey: .version) ?? .string("")
+        init(data: Data) throws {
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw DecodingError.typeMismatch(
+                    [String: Any].self,
+                    .init(codingPath: [], debugDescription: "Expected a command index object.")
+                )
+            }
+            func entries(_ key: String) throws -> [Any] {
+                guard let value = object[key], !(value is NSNull) else { return [] }
+                guard let values = value as? [Any] else {
+                    throw DecodingError.typeMismatch(
+                        [Any].self,
+                        .init(codingPath: [], debugDescription: "Expected an array for \(key).")
+                    )
+                }
+                return values
+            }
+            applications = try entries("applications")
+            applicationCommands = try entries("application_commands")
+            if let value = object["version"], !(value is NSNull) {
+                version = try JSONDecoder().decode(
+                    StringOrInteger.self,
+                    from: JSONSerialization.data(withJSONObject: value, options: .fragmentsAllowed)
+                )
+            } else {
+                version = .string("")
+            }
         }
     }
 
@@ -76,6 +92,12 @@ struct ApplicationCommandIndexDecoder {
         var description: String?
         var icon: String?
         var bot: ApplicationBotDTO?
+        var botID: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, description, icon, bot
+            case botID = "bot_id"
+        }
 
         var domain: ApplicationCommandApplication {
             let iconURL = icon.flatMap { hash in
@@ -83,7 +105,7 @@ struct ApplicationCommandIndexDecoder {
             }
             return ApplicationCommandApplication(
                 id: id, name: name, description: description ?? "", iconURL: iconURL,
-                bot: bot?.domain
+                bot: bot?.domain, botID: botID.flatMap(UserID.init)
             )
         }
     }
@@ -113,20 +135,17 @@ struct ApplicationCommandIndexDecoder {
         func domain(optionType: ApplicationCommandOptionType) -> ApplicationCommandChoice? {
             let parsed: ApplicationCommandChoiceValue
             switch (optionType, value) {
-            case (.integer, let .number(value)) where value.isFinite
-                && value.rounded(.towardZero) == value
-                && value >= Double(Int64.min) && value <= Double(Int64.max):
-                parsed = .integer(Int64(value))
+            case (.integer, let .number(value)):
+                guard let integer = Int64(exactly: value) else { return nil }
+                parsed = .integer(integer)
             case (.number, let .number(value)) where value.isFinite:
                 parsed = .number(value)
             case (.string, let .string(value)):
                 parsed = .string(value)
             case (_, let .string(value)):
                 parsed = .string(value)
-            case (_, let .number(value)) where value.isFinite && value.rounded(.towardZero) == value:
-                parsed = .integer(Int64(value))
             case (_, let .number(value)) where value.isFinite:
-                parsed = .number(value)
+                parsed = Int64(exactly: value).map(ApplicationCommandChoiceValue.integer) ?? .number(value)
             default:
                 return nil
             }
@@ -209,6 +228,7 @@ struct ApplicationCommandIndexDecoder {
         var options: [OptionDTO]?
         var permissions: [PermissionDTO]?
         var contexts: [Int]?
+        var dmPermission: Bool?
         var integrationTypes: [Int]?
         var globalPopularityRank: Int?
 
@@ -222,6 +242,7 @@ struct ApplicationCommandIndexDecoder {
             case localizedDescription = "description_localized"
             case integrationTypes = "integration_types"
             case globalPopularityRank = "global_popularity_rank"
+            case dmPermission = "dm_permission"
         }
 
         func flattened(
@@ -258,7 +279,7 @@ struct ApplicationCommandIndexDecoder {
                     options: leafOptions,
                     subcommandPath: path,
                     permissions: (permissions ?? []).map(\.domain),
-                    contexts: contexts ?? [],
+                    contexts: contexts ?? (dmPermission == false ? [0] : [0, 1]),
                     integrationTypes: integrationTypes ?? [],
                     globalPopularityRank: globalPopularityRank,
                     rootCommandJSON: rawJSON
@@ -319,19 +340,25 @@ struct ApplicationCommandIndexDecoder {
     static func decode(_ data: Data, target: ApplicationCommandIndexTarget) throws
         -> ApplicationCommandCatalog
     {
-        let envelope = try JSONDecoder().decode(Envelope.self, from: data)
+        // Preserve unknown command fields for execution without decoding every
+        // scalar through JSONValue's speculative Codable type checks.
+        let envelope = try Envelope(data: data)
+        let decoder = JSONDecoder()
         var applications: [String: ApplicationCommandApplication] = [:]
+        // Index order breaks ties between equally named sections, as in Discord.
+        var applicationOrder: [String] = []
         for value in envelope.applications {
-            guard let payload = try? JSONEncoder().encode(value),
-                  let application = try? JSONDecoder().decode(ApplicationDTO.self, from: payload)
+            guard let payload = try? JSONSerialization.data(withJSONObject: value, options: .fragmentsAllowed),
+                  let application = try? decoder.decode(ApplicationDTO.self, from: payload)
             else { continue }
+            if applications[application.id] == nil { applicationOrder.append(application.id) }
             applications[application.id] = application.domain
         }
 
         var commands: [ApplicationCommand] = []
         for value in envelope.applicationCommands {
-            guard let payload = try? JSONEncoder().encode(value),
-                  let command = try? JSONDecoder().decode(CommandDTO.self, from: payload),
+            guard let payload = try? JSONSerialization.data(withJSONObject: value, options: .fragmentsAllowed),
+                  let command = try? decoder.decode(CommandDTO.self, from: payload),
                   let application = applications[command.applicationID]
             else { continue }
             commands.append(contentsOf: command.flattened(application: application, rawJSON: payload))
@@ -339,7 +366,7 @@ struct ApplicationCommandIndexDecoder {
         return ApplicationCommandCatalog(
             target: target,
             version: envelope.version.value.isEmpty ? nil : envelope.version.value,
-            applications: applications.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending },
+            applications: applicationOrder.compactMap { applications[$0] },
             commands: commands
         )
     }

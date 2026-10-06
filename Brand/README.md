@@ -28,5 +28,5 @@ Do not edit a downsized PNG as the source of truth. Update the appropriate
   clipped to circles for GitHub-compatible rendering.
 - `brand.json` — machine-readable brand name and gradient colors.
 
-All exported PNGs are intentionally committed uncompressed rather than wrapped
-in ZIP archives so Git can inventory each usable asset directly.
+Exported PNGs are committed as individual files rather than ZIP archives so Git
+can inventory each usable asset directly.

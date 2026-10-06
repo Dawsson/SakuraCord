@@ -70,8 +70,12 @@ enum MentionAutocompleteSuggestionFactory {
             var seen = Set<UserID>()
             let recent = recentMessages.reversed().compactMap { message -> Member? in
                 guard seen.insert(message.author.id).inserted else { return nil }
-                return resolvedByID[message.author.id]
-                    ?? Member(user: message.author, roleName: "Member", status: .offline)
+                if let member = resolvedByID[message.author.id] { return member }
+                // Webhook deliveries (webhooks and app replies) only name a
+                // mentionable author when that author resolved as a member:
+                // webhook identities and user-installed apps never do.
+                guard message.webhookID == nil || message.guildMember != nil else { return nil }
+                return Member(user: message.author, roleName: "Member", status: .offline)
             }
             // Discord prefers recent channel authors for a bare @. When the
             // channel has no messages cached, its guild-member store order is

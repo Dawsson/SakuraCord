@@ -3,6 +3,26 @@ import Foundation
 import SakuraCordModels
 
 extension AppModel {
+    var openThreadParentChannel: Channel? {
+        guard let parentID = openThread?.parentID else { return nil }
+        if let selectedChannel, selectedChannel.id == parentID { return selectedChannel }
+        return snapshot?.channels.first { $0.id == parentID }
+            ?? visibleChannels.first { $0.id == parentID }
+    }
+
+    var openThreadAccess: ConversationAccess {
+        guard let thread = openThread, let channel = openThreadParentChannel else { return .checking }
+        guard let guildID = channel.guildID else { return .readable(canSend: true) }
+        let access = ConversationPermissionResolver.threadAccess(
+            effectivePermissions: effectiveMessagePermissions(in: channel),
+            isLocked: thread.isLocked
+        )
+        if requiresOnboarding(in: guildID) || onboardingMember(in: guildID)?.isPending == true {
+            return access.isReadable ? .readable(canSend: false) : access
+        }
+        return access
+    }
+
     func open(_ thread: MessageThreadSummary) {
         guard openThread?.id != thread.id else { return }
         let starter = messages.first { $0.thread?.id == thread.id }
@@ -38,10 +58,13 @@ extension AppModel {
         AppPerformanceSignposts.beginConversationNavigation(to: thread.id)
         readState.merge(thread: thread)
         openThread = thread
+        if let selectedChannelID, !isConversationPresented(selectedChannelID) {
+            suspendSelectedConversationPresentation()
+        }
         recordForwardDestinationVisit(thread.id)
         _ = readState.updatePresentation(
             channelID: thread.id,
-            isPresented: true,
+            isPresented: isConversationPresented(thread.id),
             initialHistoryLoaded: false,
             initialPositionEstablished: false,
             windowIsActive: mainWindowIsActive,
@@ -173,7 +196,7 @@ extension AppModel {
             fresh: refreshedMessages,
             hasMoreBefore: page.hasMoreBefore,
             authoritativeOldestMessageID: page.messages.map(\.id).min()
-        )
+        ).map(pollVotePresentationPreserving)
         seedSlowmodeHistory(threadMessages)
         hasMoreThreadMessages = page.hasMoreBefore
         threadErrorMessage = nil
@@ -225,13 +248,8 @@ extension AppModel {
         inbox.metadataTasks.removeValue(forKey: channelID)?.cancel()
         inbox.threads[channelID] = nil
 
-        let retained = messages + threadMessages + messageCache.values.flatMap { $0 }
-            + pinnedMessages.items.map(\.message)
-            + inbox.mentions + inbox.groups.flatMap(\.messages)
-            + (messageSearch.page?.results.flatMap(\.messages) ?? [])
-            + forumCataloguePosts.flatMap { [$0.firstMessage, $0.mostRecentMessage].compactMap { $0 } }
         var seen = Set<MessageID>()
-        for message in retained where message.thread?.id == channelID && seen.insert(message.id).inserted {
+        for message in retainedMessages where message.thread?.id == channelID && seen.insert(message.id).inserted {
             var update = MessageUpdate(messageID: message.id, channelID: message.channelID)
             update.thread = .some(nil)
             consumeImmediately(.messagePatched(update))
@@ -239,6 +257,7 @@ extension AppModel {
     }
 
     func closeThread() {
+        threadCommandComposer.resetForChannelChange()
         if let threadID = openThread?.id {
             cancelConversationRefresh(in: threadID)
             let hasLoadedHistory = hasMoreCache[threadID] != nil
@@ -459,6 +478,7 @@ extension AppModel {
         closeThread()
         dismissPinnedMessages()
         threadCreation = ThreadCreationDraft(parentID: channelID, permissions: permissions)
+        if !isConversationPresented(channelID) { suspendSelectedConversationPresentation() }
         if !channelDraft.isEmpty {
             updateDraft("")
             threadDraft = channelDraft

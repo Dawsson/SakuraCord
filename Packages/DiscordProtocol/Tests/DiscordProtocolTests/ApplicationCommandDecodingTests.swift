@@ -46,7 +46,11 @@ func commandIndexDecodingAndFlattening() throws {
                           "type":4,
                           "name":"level",
                           "description":"Level",
-                          "choices":[{"name":"One","value":1}],
+                          "choices":[
+                            {"name":"One","value":1},
+                            {"name":"Out of range","value":9223372036854775808},
+                            {"name":"Fractional","value":1.5}
+                          ],
                           "min_value":1,
                           "max_value":5,
                           "autocomplete":false
@@ -57,7 +61,7 @@ func commandIndexDecodingAndFlattening() throws {
                   ]
                 }
               ],
-              "future_root_field": {"retained": true}
+              "future_root_field": {"retained": true, "integer": 9007199254740993}
             }
           ]
         }
@@ -78,9 +82,12 @@ func commandIndexDecodingAndFlattening() throws {
     #expect(command.options[0].isRequired)
     #expect(command.options[1].minimumValue == 1)
     #expect(command.options[1].maximumValue == 5)
-    #expect(command.options[1].choices.first?.value == .integer(1))
+    #expect(command.options[1].choices.map(\.value) == [.integer(1)])
     #expect(command.options[2].type.rawValue == 42)
-    #expect(String(data: command.rootCommandJSON, encoding: .utf8)?.contains("future_root_field") == true)
+    let raw = try #require(JSONSerialization.jsonObject(with: command.rootCommandJSON) as? [String: Any])
+    let future = try #require(raw["future_root_field"] as? [String: Any])
+    #expect(future["retained"] as? Bool == true)
+    #expect((future["integer"] as? NSNumber)?.uint64Value == 9_007_199_254_740_993)
 }
 
 @Test("command index decoder localizes display fields while preserving execution names")
@@ -89,7 +96,7 @@ func commandIndexLocalization() throws {
         #"""
         {
           "version": 9,
-          "applications": [{"id":"100","name":"Utility"}],
+          "applications": [{"id":"100","name":"Utility","bot_id":"101"}],
           "application_commands": [
             {
               "id":"200",
@@ -120,6 +127,8 @@ func commandIndexLocalization() throws {
 
     let catalog = try ApplicationCommandIndexDecoder.decode(data, target: .user)
     let command = try #require(catalog.commands.first)
+    #expect(command.application.botID == UserID(rawValue: 101))
+    #expect(command.application.bot == nil)
     #expect(command.name == "hello")
     #expect(command.localizedName == "salut")
     #expect(command.displayName == "salut")
@@ -131,14 +140,37 @@ func commandIndexLocalization() throws {
     #expect(command.options.first?.maximumLength == 20)
 }
 
+@Test("command contexts distinguish legacy DM permissions from explicit contexts")
+func commandIndexLegacyContexts() throws {
+    let cases: [(fields: [String: Any], expected: [Int])] = [
+        ([:], [0, 1]),
+        (["dm_permission": true], [0, 1]),
+        (["dm_permission": false], [0]),
+        (["contexts": [2], "dm_permission": false], [2]),
+        (["contexts": [Int]()], [])
+    ]
+    for testCase in cases {
+        var command: [String: Any] = [
+            "id": "200", "application_id": "100", "version": "1", "name": "help"
+        ]
+        command.merge(testCase.fields) { _, value in value }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "applications": [["id": "100", "name": "Utility"]],
+            "application_commands": [command]
+        ])
+        let catalog = try ApplicationCommandIndexDecoder.decode(data, target: .user)
+        #expect(catalog.commands.first?.contexts == testCase.expected)
+    }
+}
+
 @Test("malformed command entries do not discard a usable index")
 func commandIndexLossyEntries() throws {
     let data = Data(
         #"""
         {
-          "applications": [{"id":"100","name":"Utility"}, {"bad":true}],
+          "applications": [{"id":"100","name":"Utility"}, {"bad":true}, null, 5],
           "application_commands": [
-            {"id":"broken"},
+            {"id":"broken"}, null, 5,
             {"id":"200","application_id":"100","version":"1","name":"ping","description":"Ping"}
           ]
         }

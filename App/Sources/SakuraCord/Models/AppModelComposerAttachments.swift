@@ -12,12 +12,17 @@ extension AppModel {
     }
 
     func isComposerDropEligible(_ destination: MessageComposerDestination) -> Bool {
-        guard let permissions = selectedEffectivePermissions,
+        let channel = switch destination {
+        case .channel: selectedChannel
+        case .thread: threadCreation == nil ? openThreadParentChannel : selectedChannel
+        }
+        guard let channel, let permissions = effectiveMessagePermissions(in: channel),
               permissions & DiscordPermissionBits.attachFiles != 0
         else { return false }
+        guard commandComposer(for: destination).activeCommand == nil else { return false }
         switch destination {
         case .channel:
-            guard commandComposer.activeCommand == nil,
+            guard
                   selectedConversationAccess.canSend,
                   let kind = selectedChannel?.kind
             else { return false }
@@ -60,20 +65,22 @@ extension AppModel {
     }
 
     /// Fills the active slash command's attachment option with the first
-    /// pasted file. Like Discord, the command takes no other files.
-    func receiveCommandAttachment(_ incoming: ComposerIncomingAttachments) async {
+    /// selected or pasted file. Like Discord, the command takes no other files.
+    @discardableResult
+    func receiveCommandAttachment(_ incoming: ComposerIncomingAttachments, in destination: MessageComposerDestination = .channel) async -> Bool {
+        let commandComposer = commandComposer(for: destination)
         let url: URL? = switch incoming {
         case let .external(urls): uploadableFileURLs(urls).first
         case let .owned(batch): adoptPromisedFileBatch(batch).first
         }
-        guard let url else { return }
+        guard let url else { return false }
         beginUsingOwnedPromisedFiles([url])
         defer { endUsingOwnedPromisedFiles([url]) }
         guard let target = commandComposer.attachmentPasteTarget(),
               !(await attachmentURLsWithinDiscordLimit([url])).isEmpty,
               !Task.isCancelled
-        else { return }
-        commandComposer.finishAttachmentPaste(url, target: target)
+        else { return false }
+        return commandComposer.finishAttachmentPaste(url, target: target)
     }
 
     @discardableResult

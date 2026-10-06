@@ -83,6 +83,7 @@ private extension View {
     func composerOverlay(_ overlay: some View) -> some View {
         self.overlay(alignment: .top) {
             overlay
+                .background { ComposerOverlayPointerRegion() }
                 .alignmentGuide(.top) { dimensions in
                     dimensions[.bottom] + 7
                 }

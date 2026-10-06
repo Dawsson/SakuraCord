@@ -7,30 +7,66 @@ extension AppModel {
         on message: Message, customID: String, kind: ComponentInteractionKind, values: [String] = []
     ) async {
         let key = ComponentControlKey(messageID: message.id, customID: customID)
-        guard !componentInteractionPresentation.pendingControls.contains(key)
-        else { return }
+        // One action per message at a time; siblings stay disabled meanwhile.
+        guard !componentInteractionPresentation.pendingMessages.contains(message.id) else { return }
         guard supportedCapabilities.contains(.components) else {
-            componentInteractionPresentation.errors[key] =
-                ChatProviderError.capabilityDisabled(.components).localizedDescription
+            updateComponentPresentation {
+                $0.errors[key] = ChatProviderError.capabilityDisabled(.components).localizedDescription
+            }
             return
         }
+        guard let applicationID = message.applicationID
+            ?? message.application.flatMap({ ApplicationID($0.id) })
+            ?? message.interactionMetadata?.applicationID.flatMap(ApplicationID.init)
+            // Ordinary bot messages have no interaction/application envelope.
+            // Incoming webhooks are message-scoped identities, not bot apps.
+            ?? (message.author.isBot && message.webhookID == nil
+                ? ApplicationID(rawValue: message.author.id.rawValue) : nil)
+        else {
+            updateComponentPresentation {
+                $0.errors[key] = "This message doesn’t identify the app that owns it."
+            }
+            return
+        }
+        let guildID = message.guildID
+            ?? visibleChannels.first { $0.id == message.channelID }?.guildID
+            ?? snapshot?.channels.first { $0.id == message.channelID }?.guildID
         let submission = ComponentInteractionSubmission(
-            messageID: message.id, channelID: message.channelID, guildID: message.guildID,
-            applicationID: message.applicationID, customID: customID, kind: kind, values: values
+            messageID: message.id, messageFlags: message.flags, channelID: message.channelID,
+            guildID: guildID, applicationID: applicationID, customID: customID, kind: kind,
+            values: values
         )
-        componentInteractionPresentation.pendingControls.insert(key)
-        componentKeyByNonce[submission.nonce] = key
-        componentInteractionPresentation.errors[key] = nil
+        updateComponentPresentation {
+            $0.pendingControls.insert(key)
+            $0.pendingMessages.insert(message.id)
+            $0.errors = $0.errors.filter { $0.key.messageID != message.id }
+        }
+        trackInteraction(
+            PendingInteractionRecord(kind: .component(
+                key, channelID: message.channelID,
+                applicationName: message.application?.name ?? message.author.displayName
+            )),
+            nonce: submission.nonce
+        )
         let session = accountSession()
         do {
             try await session.provider.submitComponentInteraction(submission)
-        } catch {
             guard isCurrentAccountSession(session) else { return }
-            componentInteractionPresentation.pendingControls.remove(key)
-            componentKeyByNonce[submission.nonce] = nil
-            componentInteractionPresentation.errors[key] =
-                error.localizedDescription
+            startInteractionDeadline(nonce: submission.nonce)
+        } catch {
+            guard isCurrentAccountSession(session), finishPendingInteraction(submission.nonce) != nil else { return }
+            DiscordAPIDiagnosticStore.shared.recordClientFailure(error)
+            updateComponentPresentation {
+                $0.pendingControls.remove(key)
+                $0.pendingMessages.remove(message.id)
+                $0.errors[key] = error.localizedDescription
+            }
         }
+    }
+
+    func updateComponentPresentation(_ change: (inout ComponentInteractionPresentationState) -> Void) {
+        change(&componentInteractionPresentation)
+        timelinePresentationRevision &+= 1
     }
 
     func supportsCapability(_ capability: ChatCapability) -> Bool {
@@ -70,7 +106,9 @@ extension AppModel {
     func cachedComponentChoices(
         kind: ComponentSelectKind,
         guildID: GuildID?,
-        channelTypes: [Int]
+        channelTypes: [Int],
+        limit: Int = 25,
+        query: String = ""
     ) -> [ComponentSelectOption] {
         let roles = componentChoiceRoles(in: guildID)
         let choices: [ComponentSelectOption]
@@ -97,7 +135,19 @@ extension AppModel {
                 channelTypes: channelTypes
             ).map(componentChoice(for:))
         }
-        return Array(choices.prefix(25))
+        return Array(choices.lazy.filter {
+            query.isEmpty || $0.label.localizedCaseInsensitiveContains(query)
+                || $0.description?.localizedCaseInsensitiveContains(query) == true
+        }.prefix(limit))
+    }
+
+    /// Display metadata for entity defaults, which arrive as bare IDs.
+    func resolvedDefaultComponentChoices(
+        _ defaults: [ComponentSelectOption],
+        kind: ComponentSelectKind,
+        guildID: GuildID?
+    ) -> [ComponentSelectOption] {
+        resolvedComponentChoices(defaults, kind: kind, guildID: guildID)
     }
 
     private func resolvedComponentChoices(
@@ -283,6 +333,11 @@ extension AppModel {
             ComponentControlKey(messageID: messageID, customID: customID))
     }
 
+    /// Discord disables a message's other controls while one action is pending.
+    func isComponentInteractionPending(messageID: MessageID) -> Bool {
+        componentInteractionPresentation.pendingMessages.contains(messageID)
+    }
+
     func componentSelection(
         messageID: MessageID,
         customID: String
@@ -311,31 +366,6 @@ extension AppModel {
             .filter { $0.key.messageID == messageID }
             .sorted { $0.key.customID < $1.key.customID }
             .first?.value
-    }
-
-    func dismissInteractionModal() {
-        presentedInteractionModal = nil
-        interactionModalNonce = nil
-    }
-
-    func submitModal(values: [String: [String]], fileURLs: [String: [URL]]) async -> Bool {
-        guard let modal = presentedInteractionModal, let nonce = interactionModalNonce else {
-            return false
-        }
-        let session = accountSession()
-        do {
-            try await session.provider.submitModal(
-                ModalSubmission(customID: modal.customID, values: values, fileURLs: fileURLs),
-                nonce: nonce
-            )
-            guard isCurrentAccountSession(session) else { return false }
-            dismissInteractionModal()
-            return true
-        } catch {
-            guard isCurrentAccountSession(session) else { return false }
-            interactionErrorMessage = error.localizedDescription
-            return false
-        }
     }
 
 }

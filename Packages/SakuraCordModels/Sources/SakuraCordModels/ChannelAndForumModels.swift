@@ -318,6 +318,8 @@ public struct ForumPostQuery: Hashable, Sendable {
     public var sortOrder: ForumSortOrder
     public var selectedTagIDs: Set<ForumTagID>
     public var tagMatch: ForumTagMatch
+    /// Await the server page and propagate failures instead of presenting a partial cache.
+    public var requiresFreshPage: Bool
     public var offset: Int
     public var limit: Int
 
@@ -327,12 +329,14 @@ public struct ForumPostQuery: Hashable, Sendable {
         selectedTagIDs: Set<ForumTagID> = [],
         tagMatch: ForumTagMatch = .matchSome,
         offset: Int = 0,
-        limit: Int = 10
+        limit: Int = 10,
+        requiresFreshPage: Bool = false
     ) {
         self.scope = scope
         self.sortOrder = sortOrder
         self.selectedTagIDs = selectedTagIDs
         self.tagMatch = tagMatch
+        self.requiresFreshPage = requiresFreshPage
         self.offset = max(0, offset)
         self.limit = max(1, limit)
     }

@@ -15,6 +15,9 @@ extension NativeTimelineCanvasView {
             actions.applyTheme(theme)
         case let .openSettings(destination):
             actions.openSettings(destination)
+        case let .startIssueReport(kind):
+            guard let model else { return false }
+            model.presentIssueReport(kind)
         case .sendDiagnostics:
             guard let model, let window else { return false }
             let channelID = message.channelID

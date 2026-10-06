@@ -1,0 +1,152 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "locations",
+    "cause",
+    "suggestedFix",
+    "suggestedTest",
+    "confidence",
+    "fixable",
+    "triage",
+    "fixCommit",
+    "classificationReason"
+  ],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "Two or three sentences for the reporter and maintainers."
+    },
+    "locations": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "line",
+          "reason"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "cause": {
+      "type": "string"
+    },
+    "suggestedFix": {
+      "type": "string"
+    },
+    "suggestedTest": {
+      "type": "string"
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "fixable": {
+      "type": "boolean"
+    },
+    "triage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "area",
+        "priority",
+        "title",
+        "summary",
+        "duplicateOf",
+        "duplicateConfidence",
+        "duplicateReason",
+        "needsInformation",
+        "questions"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "bug",
+            "feature"
+          ]
+        },
+        "area": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 90
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "duplicateOf": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "duplicateConfidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "duplicateReason": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "needsInformation": {
+          "type": "boolean"
+        },
+        "questions": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        }
+      }
+    },
+    "fixCommit": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Full 40-character commit SHA that fixes precisely this report, only after inspecting its diff and the relevant release source; otherwise null."
+    },
+    "classificationReason": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "Why this is a bug or feature, especially if the reporter chose the wrong category."
+    }
+  }
+}

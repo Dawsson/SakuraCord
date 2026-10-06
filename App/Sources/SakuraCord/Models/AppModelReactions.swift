@@ -178,8 +178,8 @@ extension AppModel {
 
     func reactionMessage(for key: ReactionMutationKey) -> Message? {
         messageInWorkspace(channelID: key.channelID, messageID: key.messageID)
-            ?? inbox.mentions.first { $0.id == key.messageID }
-            ?? inbox.groups.lazy.flatMap(\.messages).first { $0.id == key.messageID }
+            ?? presentedGuideResource?.messages.first { $0.id == key.messageID && $0.channelID == key.channelID }
+            ?? inbox.retainedMessages.first { $0.id == key.messageID }
     }
 
     func knownReactionReactor(for userID: UserID) -> ReactionReactor? {
@@ -312,6 +312,13 @@ extension AppModel {
         if key.channelID == openThread?.id {
             threadMessages = updating(threadMessages)
         }
+        if let resource = presentedGuideResource, resource.channelID == key.channelID,
+           let message = resource.messages.first(where: { $0.id == key.messageID }) {
+            receiveGuideResourceEvent(.messageUpdated(updating(message)))
+        }
+        if let message = inbox.retainedMessages.first(where: { $0.id == key.messageID }) {
+            reconcileInboxMessage(updating(message))
+        }
 
         guard let forumIndex = forumCatalogueIndexByID[key.channelID] else { return }
         var forumPost = forumCataloguePosts[forumIndex]
@@ -355,8 +362,7 @@ extension AppModel {
     }
 
     private func applyInboxReactionUpdate(_ update: MessageReactionUpdate, currentUserID: UserID?, reactor: ReactionReactor?) {
-        if let message = inbox.mentions.first(where: { $0.id == update.messageID })
-            ?? inbox.groups.lazy.flatMap(\.messages).first(where: { $0.id == update.messageID }) {
+        if let message = inbox.retainedMessages.first(where: { $0.id == update.messageID }) {
             var updated = message
             if updated.applyReactionUpdate(update, currentUserID: currentUserID, reactor: reactor) {
                 reconcileInboxMessage(updated)
@@ -415,28 +421,33 @@ extension AppModel {
 
         applyInboxReactionUpdate(update, currentUserID: currentUserID, reactor: reactor)
 
+        if var resourceMessages = presentedGuideResource?.messages {
+            applying(to: &resourceMessages)
+            if let message = resourceMessages.first(where: { $0.id == update.messageID && $0.channelID == update.channelID }) {
+                receiveGuideResourceEvent(.messageUpdated(message))
+            }
+        }
+
         if let forumIndex = forumCatalogueIndexByID[update.channelID] {
             var post = forumCataloguePosts[forumIndex]
             if var firstMessage = post.firstMessage, firstMessage.id == update.messageID {
-                if firstMessage.applyReactionUpdate(
+                _ = firstMessage.applyReactionUpdate(
                     update,
                     currentUserID: currentUserID,
                     reactor: reactor
-                ) {
-                    post.firstMessage = firstMessage
-                }
+                )
+                post.firstMessage = firstMessage
                 messageToPersist = firstMessage
             }
             if var mostRecentMessage = post.mostRecentMessage,
                mostRecentMessage.id == update.messageID
             {
-                if mostRecentMessage.applyReactionUpdate(
+                _ = mostRecentMessage.applyReactionUpdate(
                     update,
                     currentUserID: currentUserID,
                     reactor: reactor
-                ) {
-                    post.mostRecentMessage = mostRecentMessage
-                }
+                )
+                post.mostRecentMessage = mostRecentMessage
                 messageToPersist = mostRecentMessage
             }
             if post != forumCataloguePosts[forumIndex] {

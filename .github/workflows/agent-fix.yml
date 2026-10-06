@@ -1,0 +1,153 @@
+name: Agent · Fix
+run-name: >-
+  ${{ github.event.label.name == 'agent: fix' && format('Agent · Fix · #{0}', github.event.issue.number) || 'Agent · Skipped' }}
+
+# The separate implementation stage of the SakuraCord issue pipeline. Only people with write access (or the
+# hub, on a maintainer's request from Discord) can add `agent: fix`. Codex works
+# offline in the checkout, and a draft pull request is opened for human review.
+# Nothing is ever merged automatically.
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: agent-fix-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    if: "github.event.label.name == 'agent: fix'"
+    runs-on: xcode-27
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      BRANCH: agent/issue-${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: nightly
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .agent-control
+          sparse-checkout: .github/agents
+          persist-credentials: false
+      - name: Install Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Cache SwiftPM dependencies
+        uses: actions/cache@v5
+        with:
+          path: .codex-runtime/swiftpm-cache
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-xcode-27-${{ hashFiles('App/Package.resolved', 'App/Package.swift', 'Packages/**/Package.swift') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ runner.arch }}-xcode-27-
+      - name: Resolve dependencies and tools before going offline
+        run: |
+          source script/runtime.sh
+          swift package --package-path "$SAKURACORD_PACKAGE_DIR" \
+            --cache-path "$SAKURACORD_SWIFTPM_CACHE_DIR" \
+            --scratch-path "$SAKURACORD_SCRATCH_DIR" resolve
+          ./script/code_quality.sh check || true
+      - name: Build prompt
+        run: |
+          node .agent-control/.github/agents/issue-context.mjs .agent-control/.github/agents/fix.md "$RUNNER_TEMP/prompt.md"
+      - name: Fix with Codex
+        env:
+          GH_TOKEN: ""
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: ${{ runner.temp }}/prompt.md
+          output-schema-file: .agent-control/.github/agents/fix.schema.json
+          output-file: ${{ runner.temp }}/fix.json
+          model: ${{ vars.AGENT_FIX_MODEL || 'gpt-6-luna' }}
+          effort: ${{ vars.AGENT_FIX_EFFORT || 'high' }}
+          permission-profile: ":workspace"
+          allow-bot-users: ${{ vars.SAKURACORD_BOT_SLUG }}
+      - name: Check changes
+        id: changes
+        run: |
+          rm -rf .agent-control
+          git restore --staged . 2>/dev/null || true
+          # Never ship agent edits to automation, release, or signing files.
+          git restore --source=HEAD --staged --worktree -- .github .githooks script Config Releases
+          git clean -fd -- .github .githooks script Config Releases
+          if git status --porcelain | grep -q .; then echo "changed=true" >> "$GITHUB_OUTPUT"; else echo "changed=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Code quality
+        if: steps.changes.outputs.changed == 'true'
+        id: quality
+        continue-on-error: true
+        run: |
+          files=$(git diff --name-only -- '*.swift'; git ls-files --others --exclude-standard -- '*.swift')
+          if [ -n "$files" ]; then ./script/code_quality.sh fix --files $files || true; fi
+          ./script/code_quality.sh check
+      - name: Create app token
+        if: steps.changes.outputs.changed == 'true'
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.SAKURACORD_BOT_APP_ID }}
+          private-key: ${{ secrets.SAKURACORD_BOT_PRIVATE_KEY }}
+      - name: Open draft pull request
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          RESULT_PATH: ${{ runner.temp }}/fix.json
+          QUALITY: ${{ steps.quality.outcome }}
+        run: |
+          bot_id=$(GH_TOKEN="$APP_TOKEN" gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          title=$(jq -r '.title' "$RESULT_PATH")
+          git switch -C "$BRANCH"
+          git add -A
+          git commit -m "$title" -m "Fixes #$ISSUE_NUMBER"
+          git push --force "https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$BRANCH"
+          {
+            echo "Fixes #$ISSUE_NUMBER"
+            echo
+            echo "### Summary"
+            jq -r '.summary' "$RESULT_PATH"
+            echo
+            echo "### Verification"
+            jq -r '.verification' "$RESULT_PATH"
+            echo
+            echo "### Review notes"
+            jq -r '.risks' "$RESULT_PATH"
+            echo
+            if [ "$QUALITY" != "success" ]; then echo "> ⚠️ \`./script/code_quality.sh check\` still reports problems."; echo; fi
+            echo "<sub>🤖 Drafted by the fix agent ([run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})). Review carefully before marking ready.</sub>"
+          } > pr.md
+          existing=$(GH_TOKEN="$APP_TOKEN" gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            GH_TOKEN="$APP_TOKEN" gh pr edit "$existing" --title "$title" --body-file pr.md
+          else
+            GH_TOKEN="$APP_TOKEN" gh pr create --draft --base nightly --head "$BRANCH" --title "$title" --body-file pr.md
+          fi
+      - name: Report no change
+        if: steps.changes.outputs.changed != 'true'
+        env:
+          RESULT_PATH: ${{ runner.temp }}/fix.json
+        run: |
+          {
+            echo "<!-- sakuracord:agent -->"
+            echo "<!-- sakuracord:agent-run fix ${GITHUB_RUN_ID} ${GITHUB_RUN_ATTEMPT} -->"
+            echo "### Summary"
+            echo "🤖 The fix agent didn't make a change for this issue."
+            echo
+            jq -r '.summary // "No explanation was produced."' "$RESULT_PATH" 2>/dev/null || true
+          } > note.md
+          gh issue comment "$ISSUE_NUMBER" --body-file note.md
+      - name: Clear trigger label
+        if: always()
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --remove-label "agent: fix" || true

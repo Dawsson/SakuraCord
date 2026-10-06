@@ -333,8 +333,9 @@ final class WindowModalHostingView: NSHostingView<AnyView> {
         return super.hitTest(point) ?? self
     }
 
-    // Unhandled wheel input ends here instead of escaping the modal responder chain.
-    override func scrollWheel(with event: NSEvent) {}
+    // Keep NSHostingView's wheel handling intact, including SwiftUI's elastic
+    // scrolling. The full-window hit-test surface and WindowModalCoordinator
+    // already isolate the covered workspace and reject inherited momentum.
 
     func updateDismissCallback(_ dismiss: @escaping () -> Void) {
         animationState.updateDismissCallback(dismiss)

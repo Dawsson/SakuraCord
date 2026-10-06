@@ -2,6 +2,44 @@ import Foundation
 import SakuraCordModels
 
 extension DiscordRESTProvider {
+    /// The official client's /nick action is a single member mutation, with no
+    /// profile-editor load and no automatic replay if the outcome is uncertain.
+    public func setNickname(_ nickname: String, in guildID: GuildID) async throws -> String? {
+        guard let user = currentUser else { throw ChatProviderError.unauthenticated }
+        guard nickname.utf16.count <= 32 else {
+            throw ChatProviderError.invalidRequest("Nicknames must be 32 characters or fewer.")
+        }
+        guard profileSaveID == nil else {
+            throw ChatProviderError.invalidRequest("A profile save is already in progress.")
+        }
+        let saveID = UUID()
+        let generation = profileEditingGeneration
+        let revision = profilePresentationRevisions[user.id, default: 0]
+        profileSaveID = saveID
+        defer { if profileSaveID == saveID { profileSaveID = nil } }
+        try Task.checkCancellation()
+        let data = try await performProfileSaveRequest(ProfileEditingRequest(
+            path: "/guilds/\(guildID)/members/%40me/nick", method: "PATCH",
+            body: ["nick": .string(nickname)], headers: [:]
+        ))
+        guard currentUser?.id == user.id, profileEditingGeneration == generation,
+              profileSaveID == saveID else { throw CancellationError() }
+        profileEditingResponses[.server(guildID)] = nil
+        guard case var .object(body)? = try? JSONDecoder().decode(JSONValue.self, from: data),
+              body["nick"] != nil,
+              let dto = try? JSONDecoder().decode(GuildMemberDTO.self, from: data),
+              dto.user.id == user.id.description else {
+            throw ChatProviderError.invalidRequest("Discord saved the nickname, but its response could not be loaded. Check your server profile before trying again.")
+        }
+        // Gateway may have already applied this change, or a newer one. Only
+        // reconcile the REST snapshot if no intervening profile event arrived.
+        if profilePresentationRevisions[user.id, default: 0] == revision {
+            body["guild_id"] = .string(guildID.description)
+            await handleGuildMemberAddDispatch(name: "GUILD_MEMBER_UPDATE", body: .object(body))
+        }
+        return dto.nick
+    }
+
     public func saveProfileChanges(
         _ changes: ProfileEditChanges,
         in scope: ProfileEditingScope,

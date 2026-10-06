@@ -146,13 +146,17 @@ extension AppModel {
     }
 
     func acknowledgeIfEligible(channelID: ChannelID) {
-        guard let target = readState.updatePresentation(channelID: channelID) else { return }
+        guard let target = readState.updatePresentation(
+            channelID: channelID,
+            isPresented: isConversationPresented(channelID)
+        ) else { return }
         scheduleAcknowledgement(channelID: channelID, messageID: target)
     }
 
     func acknowledgeForumVisitIfNeeded(channelID: ChannelID, now: Date = .now) {
         guard !runsChatPerformanceBenchmark else { return }
         guard selectedChannelID == channelID,
+              isConversationPresented(channelID),
               selectedChannel?.kind == .forum,
               readState.shouldAcknowledgeForumVisit(channelID: channelID),
               let target = Self.forumAcknowledgementBoundary(at: now)

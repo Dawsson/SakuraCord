@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["changed", "title", "summary", "verification", "risks"],
+  "properties": {
+    "changed": { "type": "boolean", "description": "Whether a fix was made." },
+    "title": { "type": "string", "description": "Pull request title in the imperative mood." },
+    "summary": { "type": "string", "description": "What changed and why, for reviewers." },
+    "verification": { "type": "string", "description": "Builds and tests that were run, with results." },
+    "risks": { "type": "string", "description": "What a reviewer should double-check." }
+  }
+}

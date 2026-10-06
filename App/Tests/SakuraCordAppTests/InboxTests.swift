@@ -40,6 +40,17 @@ struct InboxTests {
         #expect(await provider.acknowledgementRequests.last?.messageID == group.newestUnreadMessageID)
         #expect(model.readState.entries[group.id]?.latestKnownMessageID == incoming.id)
         #expect(model.readState.entries[group.id]?.isUnread == true)
+        // The dismissed group is the only retained copy while these events arrive.
+        model.replaceSelectedMessages(with: [])
+        model.messageCache.removeAll()
+        let edited = try #require(group.messages.first)
+        let deleted = try #require(group.messages.last)
+        var patch = MessageUpdate(messageID: edited.id, channelID: group.id)
+        patch.content = "Edited while hidden"
+        model.consumeImmediately(.messagePatched(patch))
+        model.consumeImmediately(.messageReactionUpdated(.add(channelID: group.id, messageID: edited.id,
+            userID: sender.id, emoji: "👍", kind: .normal)))
+        model.consumeImmediately(.messageDeleted(channelID: group.id, messageID: deleted.id))
         model.undoInboxRead()
         await model.acknowledgementProcessorTask?.value
         let undo = try #require(await provider.acknowledgementRequests.last)
@@ -47,6 +58,18 @@ struct InboxTests {
         #expect(!undo.manual)
         #expect(undo.mentionCount == nil)
         #expect(undo.lastViewed == 4200)
+        #expect(model.inbox.groups.first?.messages.first?.content == "Edited while hidden")
+        #expect(model.inbox.groups.first?.messages.first?.reactions.first?.count == 1)
+        #expect(model.inbox.groups.first?.messages.contains { $0.id == deleted.id } == false)
+
+        // Failed bulk acknowledgements restore a separate pending snapshot.
+        await provider.failBulkAcknowledgement(afterAcceptedCount: 0)
+        model.markAllInboxRead()
+        patch.content = "Edited while awaiting acknowledgement"
+        model.consumeImmediately(.messagePatched(patch))
+        await model.inbox.bulkTask?.value
+        #expect(model.inbox.groups.first?.messages.first?.content == "Edited while awaiting acknowledgement")
+        #expect(model.inbox.groups.first?.messages.contains { $0.id == deleted.id } == false)
     }
 
     @Test(arguments: [false, true])
@@ -177,6 +200,36 @@ struct InboxTests {
             mentionedUsers: [snapshot.currentUser]
         )))
         #expect(model.makeInboxUnreadGroups().map(\.id) == [laterCategory.id, thread.id, earlierCategory.id, ChannelID(rawValue: 200)])
+    }
+
+    @Test func `tab and collapse changes stay local until saved and reuse retained content`() async throws {
+        let (model, provider) = await fixture()
+        model.presentInbox()
+        await model.inbox.loadTask?.value
+        let group = try #require(model.inbox.groups.first)
+        #expect(group.isLoaded && !group.messages.isEmpty)
+        model.selectInboxTab(.mentions)
+        await model.inbox.loadTask?.value
+        #expect(model.inbox.mentions.count == 25)
+        // Switching back shows retained content without another fetch.
+        model.selectInboxTab(.unread)
+        #expect(model.inbox.groups.first == group && !model.inbox.isLoading)
+        model.selectInboxTab(.mentions)
+        #expect(model.inbox.mentions.count == 25 && !model.inbox.isLoading)
+        model.toggleInboxGroup(group.id)
+        // Echoes of older saves never override what the open Inbox shows.
+        model.applyInboxSettings(InboxSettings(tab: .unread))
+        #expect(model.inbox.tab == .mentions)
+        #expect(model.inbox.groups.first?.isCollapsed == true)
+        await model.inbox.settingsSyncTask?.value
+        await model.inbox.settingsTask?.value
+        let saved = await provider.inboxSettings()
+        #expect(saved.tab == .mentions && saved.collapsedChannelIDs == [group.id])
+        #expect(model.inbox.pendingTab == nil && model.inbox.pendingCollapse.isEmpty)
+        // Reopening keeps unchanged unread ranges without refetching them.
+        model.dismissInbox()
+        model.presentInbox()
+        #expect(model.inbox.groups.first?.messages == group.messages)
     }
 
     private func fixture() async -> (AppModel, MockChatProvider) {

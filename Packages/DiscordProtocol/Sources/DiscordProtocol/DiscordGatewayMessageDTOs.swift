@@ -136,40 +136,103 @@ struct GatewayApplicationCommandAutocompleteDTO: Decodable {
 struct GatewayInteractionLifecycleDTO: Decodable {
     var id: String?
     var nonce: StringOrIntegerDTO?
+    var reasonCode: Int?
     var errorCode: Int?
     var errorMessage: String?
 
     enum CodingKeys: String, CodingKey {
         case id, nonce
+        case reasonCode = "reason_code"
         case errorCode = "error_code"
         case errorMessage = "error_message"
     }
+
+    var failure: InteractionFailure {
+        InteractionFailure(reasonCode: reasonCode ?? errorCode, message: errorMessage)
+    }
 }
 
+/// `INTERACTION_MODAL_CREATE` as the user client receives it: the application
+/// is nested, `id` is the opening interaction, and `guild_id` is absent.
 struct GatewayInteractionModalDTO: Decodable {
-    var nonce: StringOrIntegerDTO
-    var applicationID: String
+    struct ApplicationDTO: Decodable {
+        var id: String
+        var name: String?
+        var description: String?
+        var icon: String?
+        var bot: UserDTO?
+    }
+
+    struct ResolvedChannelDTO: Decodable {
+        var id: String
+        var name: String?
+        var type: Int?
+    }
+
+    struct ResolvedDTO: Decodable {
+        var users: [String: UserDTO]?
+        var roles: [String: GuildRoleDTO]?
+        var channels: [String: ResolvedChannelDTO]?
+
+        var domain: ModalResolvedEntities {
+            ModalResolvedEntities(
+                users: (users ?? [:]).compactMapValues { try? $0.domain() },
+                roles: (roles ?? [:]).compactMapValues(\.domain),
+                channels: (channels ?? [:]).mapValues {
+                    ModalResolvedChannel(id: $0.id, name: $0.name ?? $0.id, type: $0.type ?? 0)
+                }
+            )
+        }
+    }
+
+    var id: String
+    var nonce: StringOrIntegerDTO?
+    var application: ApplicationDTO?
+    var applicationID: String?
     var channelID: String
     var guildID: String?
     var customID: String
     var title: String
-    var components: LossyList<MessageComponentDTO>
+    var components: [MessageComponentDTO]
+    var resolved: ResolvedDTO?
 
     enum CodingKeys: String, CodingKey {
-        case nonce, title, components
+        case id, nonce, application, title, components, resolved
         case applicationID = "application_id"
         case channelID = "channel_id"
         case guildID = "guild_id"
         case customID = "custom_id"
     }
 
-    var modal: InteractionModal {
-        InteractionModal(
+    var applicationIdentifier: String? {
+        application?.id ?? applicationID
+    }
+
+    /// Builds the domain modal. `invocationGuildID` comes from the opening
+    /// interaction's own context because the event does not carry it.
+    func modal(invocationGuildID: GuildID?) -> InteractionModal? {
+        guard let applicationIdentifier, let channelID = ChannelID(channelID) else { return nil }
+        let iconURL = application?.icon.flatMap { hash in
+            URL(string: "https://cdn.discordapp.com/app-icons/\(applicationIdentifier)/\(hash).webp?size=64")
+        }
+        return InteractionModal(
+            interactionID: id,
+            openingNonce: nonce?.value ?? "",
+            application: ApplicationCommandApplication(
+                id: applicationIdentifier,
+                name: application?.name ?? "Application",
+                description: application?.description ?? "",
+                iconURL: iconURL,
+                bot: application?.bot.flatMap { try? $0.domain() }
+            ),
+            channelID: channelID,
+            guildID: guildID.flatMap(GuildID.init) ?? invocationGuildID,
             customID: customID,
             title: title,
-            controls: components.elements.enumerated().map {
-                $0.element.modalControl(path: "modal.\($0.offset)")
-            }
+            nodes: components.enumerated().map {
+                $0.element.modalNode(path: "modal.\($0.offset)")
+            },
+            resolved: resolved?.domain ?? ModalResolvedEntities()
         )
     }
 }
@@ -370,6 +433,7 @@ struct MessageDTO: Decodable {
     struct ReferencedMessageDTO: Decodable {
         var id: String
         var author: UserDTO?
+        var webhookID: String?
         var member: MemberDTO?
         var content: String?
         var attachments: LossyList<AttachmentDTO>?
@@ -378,6 +442,7 @@ struct MessageDTO: Decodable {
         var stickers: LossyList<MessageStickerDTO>?
 
         enum CodingKeys: String, CodingKey {
+            case webhookID = "webhook_id"
             case id, author, member, content, attachments, embeds, stickers
             case stickerItems = "sticker_items"
         }
@@ -395,6 +460,7 @@ struct MessageDTO: Decodable {
                 messageID: messageID,
                 author: user,
                 guildMember: guildMember,
+                webhookID: webhookID,
                 content: content ?? "",
                 mediaKind: MessageReplyPreview.mediaKind(
                     attachments: attachments?.elements.compactMap { try? $0.domain() } ?? [],
@@ -410,6 +476,7 @@ struct MessageDTO: Decodable {
     var id: String
     var channelID: String
     var author: UserDTO?
+    var webhookID: String?
     var member: MemberDTO?
     var content: String?
     var timestamp: String?
@@ -445,6 +512,7 @@ struct MessageDTO: Decodable {
     enum CodingKeys: String, CodingKey {
         case id
         case channelID = "channel_id"
+        case webhookID = "webhook_id"
         case author, member, content, timestamp
         case editedTimestamp = "edited_timestamp"
         case attachments, reactions, pinned, nonce
@@ -464,7 +532,7 @@ struct MessageDTO: Decodable {
     }
 
     var searchIndexUsers: [UserDTO] {
-        [author].compactMap { $0 }
+        (webhookID != nil && author?.discriminator == "0000" ? [] : [author].compactMap { $0 })
             + (mentions?.elements.map(\.searchIndexUser) ?? [])
     }
 
@@ -498,7 +566,7 @@ struct MessageDTO: Decodable {
             guildID: messageReference?.guildID.flatMap(GuildID.init) ?? resolvedGuildID
         )
         return Message(
-            id: id, channelID: channelID, author: resolvedAuthor, guildMember: resolvedMember,
+            id: id, channelID: channelID, author: resolvedAuthor, guildMember: resolvedMember, webhookID: webhookID,
             // Forward snapshots are authorless immutable content. Flatten their
             // rich payload into the message's presentation fields while
             // retaining the snapshot and wrapper timestamp/reference below.

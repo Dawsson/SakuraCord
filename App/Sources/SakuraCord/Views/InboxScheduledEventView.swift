@@ -76,13 +76,9 @@ struct InboxEventDetailsView: View {
 extension NativeTimelineCanvasView {
     func reconcileInboxEventViews() {
         var desired: [ScheduledEventID: (InboxScheduledEvent, CGRect)] = [:]
-        if let first = rowIndex(at: max(0, visibleRect.minY)) {
-            var index = first
-            while items.indices.contains(index), displayedRowOrigin(at: index) < visibleRect.maxY {
-                if case let .inboxEvent(event) = items[index] {
-                    desired[event.id] = (event, CGRect(x: 0, y: displayedRowOrigin(at: index), width: bounds.width, height: 104))
-                }
-                index += 1
+        forEachDisplayedRow(in: visibleRect) { index in
+            if case let .inboxEvent(event) = items[index] {
+                desired[event.id] = (event, CGRect(x: 0, y: displayedRowOrigin(at: index), width: bounds.width, height: 104))
             }
         }
         for id in Array(inboxEventHosts.keys) where desired[id] == nil {

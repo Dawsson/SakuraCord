@@ -196,7 +196,7 @@ struct UserDTO: Decodable {
             username: username ?? id.description,
             discriminator: discriminator ?? "0",
             displayName: globalName ?? username ?? id.description,
-            avatarURL: avatarURL,
+            avatarURL: avatarURL ?? DiscordProfileImageAssets.defaultAvatarURL(userID: id.description, discriminator: discriminator),
             isBot: bot ?? false,
             isSystem: system ?? false,
             avatarDecorationURL: decorationURL,

@@ -7,7 +7,7 @@ struct EmojiAutocompleteRow: View {
     let suggestion: ColonAutocompleteSuggestion
     let isSelected: Bool
     let select: () -> Void
-    let highlight: () -> Void
+    var cornerRadius: CGFloat = ChatChromeMetrics.composerCornerRadius - 6
 
     var body: some View {
         Button(action: select) {
@@ -41,21 +41,17 @@ struct EmojiAutocompleteRow: View {
         .focusable(false)
         .background {
             ConcentricRectangle(
-                cornerRadius: 7,
+                cornerRadius: cornerRadius,
                 style: .continuous
             )
             .fill(isSelected ? Color.primary.opacity(0.13) : .clear)
         }
         .clipShape(
             ConcentricRectangle(
-                cornerRadius: 7,
+                cornerRadius: cornerRadius,
                 style: .continuous
             )
         )
-        .onModalHover { hovering in
-            guard hovering else { return }
-            highlight()
-        }
     }
 }
 

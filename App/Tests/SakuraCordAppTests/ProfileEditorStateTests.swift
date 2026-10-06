@@ -410,7 +410,7 @@ func `profile editor uses a preloaded editable baseline without another read`(sc
     profile.customStatus = "Saved profile status"
     let key = SakuraCord.ProfileCacheKey(userID: user.id, guildID: model.selectedGuildID)
     model.profileCache[key] = profile
-    model.presentProfile(for: member, destination: .contextual)
+    model.presentProfile(for: member, in: model.selectedGuildID, destination: .contextual)
     let editor = ProfileEditorState(model: model)
     await editor.load()
 
@@ -421,7 +421,7 @@ func `profile editor uses a preloaded editable baseline without another read`(sc
     member.customStatus = "Stale member status"
     model.consumeProfileCustomStatusChanged(userID: user.id, status: nil)
     model.membersByID[user.id] = member
-    model.presentProfile(for: member, destination: .expanded)
+    model.presentProfile(for: member, in: model.selectedGuildID, destination: .expanded)
     #expect(model.liveProfilePresentation(for: .contextual)?.member.customStatus == nil)
     #expect(model.liveProfilePresentation(for: .expanded)?.member.customStatus == nil)
     model.currentStatus = .dnd

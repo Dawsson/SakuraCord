@@ -67,6 +67,7 @@ struct NativeTimelineComponentLayout {
         let customID: String?
         let url: URL?
         let isDisabled: Bool
+        var isLoading = false
     }
 
     struct SelectRegion {
@@ -81,6 +82,7 @@ struct NativeTimelineComponentLayout {
         let channelTypes: [Int]
         let selectedOptions: [ComponentSelectOption]
         let isDisabled: Bool
+        var isLoading = false
     }
 
     struct ImageRegion {
@@ -166,7 +168,7 @@ struct NativeTimelineComponentLayout {
         if embedComponents == nil, let error = model?.componentError(for: message.id) {
             let errorBox = NodeBuilder.plainText(
                 "⚠ \(error)",
-                font: .systemFont(ofSize: 11),
+                font: .systemFont(ofSize: 13),
                 color: .systemRed
             )
             nodes.append(
@@ -281,7 +283,8 @@ private struct Node {
                 emoji: $0.emoji,
                 customID: $0.customID,
                 url: $0.url,
-                isDisabled: $0.isDisabled
+                isDisabled: $0.isDisabled,
+                isLoading: $0.isLoading
             )
         }
         result.selects = selects.map {
@@ -296,7 +299,8 @@ private struct Node {
                 options: $0.options,
                 channelTypes: $0.channelTypes,
                 selectedOptions: $0.selectedOptions,
-                isDisabled: $0.isDisabled
+                isDisabled: $0.isDisabled,
+                isLoading: $0.isLoading
             )
         }
         result.images = images.map {
@@ -581,26 +585,36 @@ private enum NodeBuilder {
         case let .actionRow(_, children):
             var result = Node()
             var horizontalOffset: CGFloat = 0
-            var maximumHeight: CGFloat = 0
+            var verticalOffset: CGFloat = 0
+            var rowHeight: CGFloat = 0
+            var contentWidth: CGFloat = 0
             for child in children {
-                if horizontalOffset > 0 {
-                    horizontalOffset += 8
-                }
-                let remaining = max(1, maximumWidth - horizontalOffset)
+                // Measure against the whole row so a button moves intact to
+                // the next line instead of shrinking into the leftover space.
                 let childNode = node(
                     for: child,
                     message: message,
                     model: model,
-                    maximumWidth: remaining,
+                    maximumWidth: maximumWidth,
                     inBubble: inBubble
                 )
-                result.merge(childNode, at: CGPoint(x: horizontalOffset, y: 0))
+                if horizontalOffset > 0 {
+                    if horizontalOffset + 8 + childNode.size.width > maximumWidth {
+                        verticalOffset += rowHeight + 8
+                        horizontalOffset = 0
+                        rowHeight = 0
+                    } else {
+                        horizontalOffset += 8
+                    }
+                }
+                result.merge(childNode, at: CGPoint(x: horizontalOffset, y: verticalOffset))
                 horizontalOffset += childNode.size.width
-                maximumHeight = max(maximumHeight, childNode.size.height)
+                contentWidth = max(contentWidth, horizontalOffset)
+                rowHeight = max(rowHeight, childNode.size.height)
             }
             result.size = CGSize(
-                width: min(maximumWidth, horizontalOffset),
-                height: maximumHeight
+                width: min(maximumWidth, contentWidth),
+                height: verticalOffset + rowHeight
             )
             return result
 
@@ -628,7 +642,7 @@ private enum NodeBuilder {
             options,
             channelTypes
         ):
-            let placeholder = rawPlaceholder ?? "Select an option…"
+            let placeholder = rawPlaceholder ?? "Make a selection"
             let font = NSFont.systemFont(ofSize: 14)
             let labelWidth = ceil(
                 (placeholder as NSString).size(
@@ -644,7 +658,9 @@ private enum NodeBuilder {
             let selectedOptions = model?.componentSelection(
                 messageID: message.id,
                 customID: customID
-            ) ?? options.filter(\.isDefault)
+            ) ?? (kind == .string
+                ? options.filter(\.isDefault)
+                : model?.resolvedDefaultComponentChoices(options, kind: kind, guildID: message.guildID) ?? options)
             let height = ComponentChoiceOptionPresentation.fieldHeight(
                 options: selectedOptions,
                 selectKind: kind,
@@ -659,10 +675,7 @@ private enum NodeBuilder {
                     model?.supportsCapability(.remoteComponentChoices) == true,
                 interactionUnavailable:
                     disabled
-                    || model?.isComponentPending(
-                        messageID: message.id,
-                        customID: customID
-                    ) == true
+                    || model?.isComponentInteractionPending(messageID: message.id) == true
             )
             return Node(
                 size: CGSize(width: width, height: height),
@@ -683,7 +696,9 @@ private enum NodeBuilder {
                         options: options,
                         channelTypes: channelTypes,
                         selectedOptions: selectedOptions,
-                        isDisabled: isDisabled
+                        isDisabled: isDisabled,
+                        // The committed select shows the dots in place of its chevron.
+                        isLoading: model?.isComponentPending(messageID: message.id, customID: customID) == true
                     )
                 ]
             )
@@ -789,28 +804,28 @@ private enum NodeBuilder {
             let showsExternalLink = url != nil
             let width = min(
                 maximumWidth,
-                ceil(
+                max(32, ceil(
                     24 + labelWidth
                         + (showsLeadingGlyph ? 22 : 0)
                         + (showsExternalLink ? 18 : 0)
-                )
+                ))
             )
+            // While one action on this message is pending, its siblings are
+            // disabled and the activated button shows progress.
+            let isLoading = url == nil && customID.map {
+                model?.isComponentPending(messageID: message.id, customID: $0) == true
+            } == true
             let isDisabled =
                 disabled
                 || style == .premium
                 || (url == nil && (
                     customID == nil
                         || model?.supportsCapability(.components) != true
-                        || customID.map {
-                            model?.isComponentPending(
-                                messageID: message.id,
-                                customID: $0
-                            ) == true
-                        } == true
+                        || model?.isComponentInteractionPending(messageID: message.id) == true
                 ))
             return Node(
                 size: CGSize(
-                    width: max(32, width),
+                    width: width,
                     height: NativeTimelineComponentButtonMetrics.height
                 ),
                 buttons: [
@@ -818,7 +833,7 @@ private enum NodeBuilder {
                         frame: CGRect(
                             x: 0,
                             y: 0,
-                            width: max(32, width),
+                            width: width,
                             height:
                                 NativeTimelineComponentButtonMetrics
                                     .height
@@ -829,7 +844,8 @@ private enum NodeBuilder {
                         emoji: emoji,
                         customID: customID,
                         url: url,
-                        isDisabled: isDisabled
+                        isDisabled: isDisabled,
+                        isLoading: isLoading
                     )
                 ]
             )

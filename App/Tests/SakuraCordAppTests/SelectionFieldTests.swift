@@ -195,7 +195,7 @@ private final class SelectionFieldSearchHarness {
         ([], "confirm", []),
         (["one", "two", "three"], "confirm", []),
         (["new"], "confirm", [["new"]]),
-        (["initial"], "confirm", []),
+        (["initial"], "confirm", [["initial"]]),
         (["new"], "outside", [["new"]]),
         ([], "outside", []),
         (["initial"], "outside", []),
@@ -208,8 +208,8 @@ private final class SelectionFieldSearchHarness {
             submit: { submissions.append($0) }, onClose: { closes += 1 }
         )
         controller.updateSelection(values)
-        if dismissal == "confirm" { controller.submitSelection(values) }
-        if dismissal == "outside" { controller.close(commit: true) }
+        if dismissal == "confirm" { controller.completeSelection(values, reason: .selected) }
+        if dismissal == "outside" { controller.completeSelection(values, reason: .dismissed) }
         controller.close()
         controller.close()
         #expect(submissions == expected)

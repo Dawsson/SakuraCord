@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Report from Discord
+    url: https://discord.gg/hWNwFXkUTP
+    about: Use /bug or /suggest in the SakuraCord server — same report, plus live updates there.
+  - name: 🌐 Report on sakuracord.app
+    url: https://sakuracord.app/report
+    about: Sign in with Discord and file a report without a GitHub account.

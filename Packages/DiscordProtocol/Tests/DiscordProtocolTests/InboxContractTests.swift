@@ -79,6 +79,24 @@ struct InboxContractTests {
         #expect(state.readStates[GuildID(rawValue: 200)] == nil)
     }
 
+    @Test(arguments: [false, true])
+    func `fresh Inbox forum pages cannot complete from a partial cache`(fails: Bool) async throws {
+        let provider = makeProvider()
+        let channel = Channel(id: ChannelID(rawValue: fails ? 401 : 400), guildID: GuildID(rawValue: 100), name: "Forum", kind: .forum)
+        let cached = ForumPost(thread: MessageThreadSummary(id: ChannelID(rawValue: 410), guildID: channel.guildID, parentID: channel.id, name: "Already read"))
+        await provider.seedForumChannelForTesting(channel, posts: [cached])
+        do {
+            let page = try await provider.forumPosts(in: channel.id, query: ForumPostQuery(sortOrder: .creationDate, requiresFreshPage: true))
+            #expect(!fails, "A failed request must not turn cached posts into a complete Inbox page")
+            #expect(page.posts.contains { $0.id == ChannelID(rawValue: 420) })
+            #expect(page.hasMore)
+            #expect(page.nextOffset == 1)
+        } catch {
+            #expect(fails)
+        }
+        await provider.disconnect()
+    }
+
     private func makeProvider() -> DiscordRESTProvider {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [InboxContractURLProtocol.self]
@@ -100,7 +118,19 @@ private final class InboxContractURLProtocol: URLProtocol, @unchecked Sendable {
         guard let url = request.url else { return }
         let body: Data
         let status: Int
-        if url.path == "/api/v9/guilds/100/ack/1/500" {
+        if url.path == "/api/v9/channels/400/threads/search" {
+            body = Data(#"""
+            {"threads":[{"id":"420","guild_id":"100","parent_id":"400","type":11,"name":"Unread post",
+              "thread_metadata":{"archived":false,"locked":false,"auto_archive_duration":1440}}],"has_more":true}
+            """#.utf8)
+            status = 200
+        } else if url.path == "/api/v9/channels/401/threads/search" {
+            body = Data(#"{"message":"Missing Access","code":50001}"#.utf8)
+            status = 403
+        } else if url.path == "/api/v9/channels/400/post-data" || url.path == "/api/v9/channels/401/post-data" {
+            body = Data(#"{"threads":{}}"#.utf8)
+            status = 200
+        } else if url.path == "/api/v9/guilds/100/ack/1/500" {
             #expect(request.httpMethod == "POST")
             #expect(requestJSON() as? [String: String] == [:])
             body = Data("{}".utf8)

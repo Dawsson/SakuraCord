@@ -144,7 +144,9 @@ extension AppModel {
         replyPreview: MessageReplyPreview?,
         attachments: [ForumPostAttachment],
         clearsComposer: Bool,
-        poll: PollDraft? = nil
+        poll: PollDraft? = nil,
+        isTTS: Bool = false,
+        nonce: String = ClientNonce.make()
     ) async -> Bool {
         guard allowSlowmodeSubmission(in: channelID) else { return false }
         let outgoing = SendMessageDraft(
@@ -153,7 +155,9 @@ extension AppModel {
             replyTo: replyTo,
             mentionsRepliedUser: mentionsRepliedUser,
             attachments: attachments,
-            poll: poll
+            nonce: nonce,
+            poll: poll,
+            isTTS: isTTS
         )
         if clearsComposer {
             stopLocalTyping(clearThrottle: true)

@@ -63,7 +63,7 @@ struct OnboardingQuestion: View {
             ),
             mode: prompt.singleSelect ? .single : .multiple(),
             source: .local(options: menuOptions),
-            configuration: .init(minimumSelectionCount: prompt.required ? 1 : 0, placeholder: "Select…", searchPlaceholder: "Search options"),
+            configuration: .init(placeholder: "Select…", searchPlaceholder: "Search options"),
             accessibilityIdentifier: "onboarding-selection-\(prompt.id)"
         )
         .accessibilityLabel(prompt.title)

@@ -706,7 +706,7 @@ extension NativeTimelineCanvasView {
         guard let url = hit.url else { return false }
         let presentSystemProfile: ((User) -> Void)? = profileAnchor.map { anchor in
             { [weak self] user in
-                self?.showMessageProfile(for: user, anchor: anchor)
+                self?.showMessageProfile(for: user, sourceMessage: message, anchor: anchor)
             }
         }
         return MessageLinkActivator.activate(
@@ -752,11 +752,12 @@ extension NativeTimelineCanvasView {
             if let user = resolver.user(id) {
                 showMentionProfile(
                     for: user,
+                    sourceMessage: message,
                     anchor: anchor
                 )
             }
         case let .role(id):
-            showMentionRole(id, anchor: anchor)
+            showMentionRole(id, sourceMessage: message, anchor: anchor)
         case let .guildNavigation(guildID, destination):
             model.openGuildNavigationDestination(destination, in: guildID)
         case let .channel(id):
@@ -887,18 +888,28 @@ extension NativeTimelineCanvasView {
         message: Message
     ) {
         guard let model else { return }
+        let target = NativeTimelineComponentSelectTarget(messageID: message.id, componentID: region.componentID)
+        // The canvas can receive another click before the hosted field is ready.
+        // Treat it as the same toggle instead of replacing the opening overlay.
+        if activeComponentChoiceTarget == target, let componentChoiceOverlay {
+            componentChoiceOverlay.close(commit: true)
+            return
+        }
         closeComponentChoiceOverlay()
         let selectedOptions = model.componentSelection(
             messageID: message.id,
             customID: region.customID
         )
+        let defaultOptions = region.kind == .string
+            ? region.options.filter(\.isDefault)
+            : model.resolvedDefaultComponentChoices(region.options, kind: region.kind, guildID: message.guildID)
         let initialSelection = Array(
-            (selectedOptions ?? region.options.filter(\.isDefault))
+            (selectedOptions ?? defaultOptions)
                 .map(\.value)
                 .prefix(max(1, region.maximumSelectionCount))
         )
         let initialOptions = initialComponentChoices(for: region, message: message, model: model)
-        var pendingOptions = selectedOptions ?? region.options.filter(\.isDefault)
+        var pendingOptions = selectedOptions ?? defaultOptions
         let overlay = ComponentChoiceOverlayController(
             initialSelection: initialSelection,
             minimumSelectionCount: region.minimumSelectionCount,
@@ -928,10 +939,7 @@ extension NativeTimelineCanvasView {
             }
         )
         componentChoiceOverlay = overlay
-        activeComponentChoiceTarget = NativeTimelineComponentSelectTarget(
-            messageID: message.id,
-            componentID: region.componentID
-        )
+        activeComponentChoiceTarget = target
         needsDisplay = true
         guard let anchorRect = componentSelectAnchorRect(
             messageID: message.id,
@@ -952,7 +960,6 @@ extension NativeTimelineCanvasView {
                 options: region.options,
                 initialOptions: initialOptions,
                 selectedOptions: selectedOptions,
-                minimumSelectionCount: region.minimumSelectionCount,
                 maximumSelectionCount: region.maximumSelectionCount,
                 loader: { [weak model] query in
                     guard let model else {
@@ -969,11 +976,8 @@ extension NativeTimelineCanvasView {
                     pendingOptions = options
                     overlay?.updateSelection(options.map(\.value))
                 },
-                submitSelection: { [weak overlay] values in
-                    overlay?.submitSelection(values)
-                },
-                dismiss: { [weak overlay] in
-                    overlay?.close()
+                complete: { [weak overlay] values, reason in
+                    overlay?.completeSelection(values, reason: reason)
                 }
             )),
             in: self,
@@ -992,12 +996,16 @@ extension NativeTimelineCanvasView {
         message: Message,
         model: AppModel
     ) -> [ComponentSelectOption] {
-        guard region.options.isEmpty else { return region.options }
-        return model.cachedComponentChoices(
+        guard region.kind != .string else { return region.options }
+        // Entity selects carry only their defaults; the choices are entities.
+        let cached = model.cachedComponentChoices(
             kind: region.kind,
             guildID: message.guildID,
             channelTypes: region.channelTypes
         )
+        let cachedValues = Set(cached.map(\.value))
+        return model.resolvedDefaultComponentChoices(region.options, kind: region.kind, guildID: message.guildID)
+            .filter { !cachedValues.contains($0.value) } + cached
     }
 
     func componentSelectAnchorRect(
@@ -1043,7 +1051,7 @@ extension NativeTimelineCanvasView {
               case let .message(row, _, _) = items[index]
         else { return nil }
         let interactionMode = MessageOutboxPresentation.interactionMode(
-            for: row.message.outboxState
+            for: row.message
         )
         guard interactionMode.allowsMessageContextMenu else { return nil }
         let localPoint = CGPoint(
@@ -1101,7 +1109,8 @@ extension NativeTimelineCanvasView {
         actions: NativeTimelineRowActions,
         failedMediaActions: MediaImageContextMenuActions?
     ) -> NSMenu? {
-        guard TimelineContextMenuHitTesting.contains(
+        guard MessageOutboxPresentation.interactionMode(for: row.message).allowsMessageContextMenu,
+              TimelineContextMenuHitTesting.contains(
             point,
             rowOrigin: displayedRowOrigin(at: index),
             highlightFrame: layouts[index].highlightFrame
@@ -1166,7 +1175,50 @@ extension NativeTimelineCanvasView {
                 )
             )
         }
+        appendApplicationCommandMenu(to: menu, row: row, index: index, point: point)
         return menu
+    }
+
+    /// Discord's Apps submenu: message commands for the message, or user
+    /// commands when the author's avatar or name was right-clicked.
+    private func appendApplicationCommandMenu(
+        to menu: NSMenu,
+        row: MessageRowPresentation,
+        index: Int,
+        point: CGPoint
+    ) {
+        let message = row.message
+        guard let model, messageInteractionContext == .conversation,
+              message.outboxState == .confirmed, !message.flags.contains(.ephemeral),
+              model.supportsCapability(.slashCommands)
+        else { return }
+        let localPoint = CGPoint(x: point.x, y: point.y - displayedRowOrigin(at: index))
+        let targetsAuthor = NativeTimelineAuthorProfileGeometry.hitFrame(
+            at: localPoint,
+            avatarFrame: layouts[index].avatarFrame,
+            authorFrame: layouts[index].authorFrame
+        ) != nil
+        let type: ApplicationCommandType = targetsAuthor ? .user : .message
+        let targetID = targetsAuthor ? message.author.id.description : message.id.description
+        let destination = model.commandDestination(in: message.channelID)
+        model.ensureApplicationCommandsLoaded(in: destination)
+        let commandComposer = model.commandComposer(for: destination)
+        guard !commandComposer.contextMenuCommands(of: type).isEmpty
+            || commandComposer.isLoading
+        else { return }
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        // Rebuilt whenever the submenu opens, so a catalog that finishes
+        // loading while the menu is up replaces the loading row.
+        let populator = ApplicationCommandAppsMenuPopulator(model: model, type: type, targetID: targetID, channelID: message.channelID)
+        submenu.delegate = populator
+        let apps = NSMenuItem(title: "Apps", action: nil, keyEquivalent: "")
+        ContextMenuItemSupport.configure(apps, title: "Apps", systemImage: SakuraCordSystemSymbol.applicationCommands)
+        apps.submenu = submenu
+        apps.representedObject = populator
+        // Discord puts Apps at the end of the reply/pin group, before Mark Unread.
+        let insertion = menu.items.firstIndex { $0.title == "Mark Unread" } ?? 0
+        menu.insertItem(apps, at: insertion)
     }
 
     func messageMenuHandler(

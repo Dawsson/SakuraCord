@@ -50,6 +50,7 @@ final class MessageSearchState {
     @ObservationIgnored var rowsRevision: UInt64 = 0
     @ObservationIgnored let rowsUpdateJournal = MessageRowsUpdateJournal()
     @ObservationIgnored var requestTask: Task<Void, Never>?
+    @ObservationIgnored var pollRefreshJournal: ConversationRefreshJournal?
 
     var currentPage: Int {
         guard let submittedQuery else { return 1 }
@@ -80,6 +81,7 @@ final class MessageSearchState {
         AppPerformanceSignposts.cancelMessageSearchPagination()
         AppPerformanceSignposts.endMessageSearchScroll()
         requestTask = nil
+        pollRefreshJournal = nil
         queryText = ""
         tokens = []
         parsedInputText = nil
@@ -190,6 +192,7 @@ extension AppModel {
         AppPerformanceSignposts.endMessageSearchScroll()
         messageSearch.requestTask = nil
         messageSearch.isSearching = false
+        messageSearch.pollRefreshJournal = nil
         messageSearch.isPresented = false
         messageSearch.isInputFocused = false
     }
@@ -308,6 +311,7 @@ extension AppModel {
             messageSearch.requestTask?.cancel()
             messageSearch.requestTask = nil
             messageSearch.isSearching = false
+            messageSearch.pollRefreshJournal = nil
             AppPerformanceSignposts.endResourceWindow(named: "MessageSearchBenchmark")
             AppPerformanceSignposts.endResourceWindow(
                 named: "MessageSearchPaginationBenchmark"
@@ -324,7 +328,10 @@ extension AppModel {
         }
 
         presentMessageSearchResultsIfNeeded()
+        startMessageSearchRequest(query, measuresPagination: measuresPagination)
+    }
 
+    private func startMessageSearchRequest(_ query: MessageSearchQuery, measuresPagination: Bool) {
         messageSearch.requestTask?.cancel()
         AppPerformanceSignposts.endResourceWindow(named: "MessageSearchBenchmark")
         AppPerformanceSignposts.endResourceWindow(
@@ -333,6 +340,8 @@ extension AppModel {
         AppPerformanceSignposts.cancelMessageSearchRequest()
         AppPerformanceSignposts.cancelMessageSearchPagination()
         messageSearch.isSearching = true
+        conversationRefreshJournalRevision &+= 1
+        messageSearch.pollRefreshJournal = ConversationRefreshJournal(revision: conversationRefreshJournalRevision)
         messageSearch.errorMessage = nil
         let resourceWindowName = beginMessageSearchMeasurement(
             measuresPagination: measuresPagination
@@ -342,8 +351,9 @@ extension AppModel {
         messageSearch.requestTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let page = try await session.provider.searchMessages(query)
+                let fetchedPage = try await session.provider.searchMessages(query)
                 try Task.checkCancellation()
+                let page = self.messageSearchPagePreservingPollVotes(fetchedPage)
                 let channelsByID = self.messageSearchChannelsByID(
                     additionalChannels: page.channels
                 )
@@ -358,12 +368,18 @@ extension AppModel {
                     throw CancellationError()
                 }
                 self.mergeMessageSearchPrivateChannels(page.channels)
-                self.messageSearch.page = page
+                // Replay from the original response so vote deltas are applied
+                // once even when more events arrived during row preparation.
+                let latestPage = self.messageSearchPagePreservingPollVotes(fetchedPage)
+                self.messageSearch.page = latestPage
                 self.messageSearch.submittedQuery = query
-                self.messageSearch.rows = rows
+                self.messageSearch.rows = latestPage == page ? rows : MessageSearchPresentation.rows(
+                    for: latestPage, channelsByID: channelsByID
+                )
                 self.messageSearch.rowsRevision &+= 1
                 self.messageSearch.errorMessage = nil
                 self.messageSearch.isSearching = false
+                self.messageSearch.pollRefreshJournal = nil
                 self.messageSearch.lastCompletedLatencyMilliseconds = Int(
                     (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
                 )
@@ -375,13 +391,14 @@ extension AppModel {
             } catch is CancellationError {
                 return
             } catch {
-                guard self.isCurrentAccountSession(session) else { return }
+                guard !Task.isCancelled, self.isCurrentAccountSession(session) else { return }
                 self.messageSearch.page = nil
                 self.messageSearch.rows = []
                 self.messageSearch.rowsRevision &+= 1
                 DiscordAPIDiagnosticStore.shared.recordClientFailure(error)
                 self.messageSearch.errorMessage = error.localizedDescription
                 self.messageSearch.isSearching = false
+                self.messageSearch.pollRefreshJournal = nil
                 self.messageSearch.requestTask = nil
                 self.cancelMessageSearchMeasurement(
                     resourceWindowName,

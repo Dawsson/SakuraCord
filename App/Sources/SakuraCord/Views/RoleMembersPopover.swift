@@ -9,9 +9,12 @@ nonisolated enum RoleMembersPopoverMetrics {
 struct RoleMembersPopover: View {
     let model: AppModel
     let roleID: RoleID
+    let guildID: GuildID?
 
     private var role: GuildRole? {
-        model.guildRoles.first { $0.id == roleID }
+        let roles = guildID.flatMap { model.guildRolesByGuildID[$0] }
+            ?? (guildID == model.selectedGuildID ? model.guildRoles : [])
+        return roles.first { $0.id == roleID }
     }
 
     var body: some View {
@@ -41,7 +44,7 @@ struct RoleMembersPopover: View {
                     LazyVStack(alignment: .leading, spacing: 2) {
                         ForEach(result.members) { member in
                             Button {
-                                model.showProfile(for: member.user)
+                                model.presentProfile(for: member, in: guildID, destination: .contextual)
                             } label: {
                                 HStack(spacing: 9) {
                                     AvatarView(

@@ -119,6 +119,17 @@ extension NativeTimelineCanvasView {
             setNeedsDisplay(rowFrame(at: index))
         }
     }
+    func setHoveredEphemeralDismissMessageID(_ value: MessageID?) {
+        guard hoveredEphemeralDismissMessageID != value else { return }
+        let old = hoveredEphemeralDismissMessageID
+        hoveredEphemeralDismissMessageID = value
+        for messageID in [old, value].compactMap({ $0 }) {
+            guard let index = items.firstIndex(where: {
+                $0.messageID == messageID
+            }) else { continue }
+            setNeedsDisplay(rowFrame(at: index))
+        }
+    }
 
     func animateComponentButtonPress(
         _ target: NativeTimelineComponentButtonTarget,
@@ -200,7 +211,7 @@ extension NativeTimelineCanvasView {
                   }),
                   case let .message(row, _, _) = items[index],
                   MessageOutboxPresentation.interactionMode(
-                    for: row.message.outboxState
+                    for: row.message
                   ).allowsHoverActions
             else {
                 removeActionCapsule()
@@ -220,7 +231,7 @@ extension NativeTimelineCanvasView {
               items.indices.contains(index),
               case let .message(row, _, _) = items[index],
               MessageOutboxPresentation.interactionMode(
-                for: row.message.outboxState
+                for: row.message
               ).allowsHoverActions,
               let model,
               let actions
@@ -1051,6 +1062,7 @@ extension NativeTimelineCanvasView {
 
     func displayedRowOrigin(at index: Int) -> CGFloat {
         contentOriginY
+            + (index >= inboxDisclosureRange.upperBound ? inboxDisclosureShift : 0)
             + NativeTimelineTransientRowGeometry.rowOrigin(
                 base: rowOrigins[index],
                 rowIndex: index,
@@ -1090,7 +1102,7 @@ extension NativeTimelineCanvasView {
             reconcileBeginningSelectionOverlay()
             positionInlineVideoOverlays()
             positionLottieStickerOverlays()
-            reconcileLoadingIndicators()
+            reconcileActivityIndicators()
             positionSpoilerOverlays()
             needsDisplay = true
         }

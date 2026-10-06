@@ -3,7 +3,7 @@ import MediaPipeline
 
 extension AppModel {
     func routeOversizedAttachment(_ prompt: OversizedAttachmentPrompt) {
-        guard conversationChannelID(for: prompt.destination) == prompt.channelID,
+        guard attachmentComposerContext(for: prompt.destination) == prompt.context,
               isComposerDropEligible(prompt.destination)
         else {
             presentNextOversizedAttachmentPrompt()
@@ -47,7 +47,7 @@ extension AppModel {
     func compactOversizedAttachment(_ prompt: OversizedAttachmentPrompt) {
         guard oversizedAttachmentPrompt?.id == prompt.id,
               prompt.stage == .compaction,
-              conversationChannelID(for: prompt.destination) == prompt.channelID,
+              attachmentComposerContext(for: prompt.destination) == prompt.context,
               isComposerDropEligible(prompt.destination)
         else { return }
         oversizedAttachmentPrompt = nil
@@ -77,14 +77,14 @@ extension AppModel {
                 try Task.checkCancellation()
                 guard generation == attachmentCompactionGeneration,
                       accountGeneration == accountSessionGeneration,
-                      conversationChannelID(for: prompt.destination) == prompt.channelID,
+                      attachmentComposerContext(for: prompt.destination) == prompt.context,
                       isComposerDropEligible(prompt.destination)
                 else { return finishAttachmentCompaction(generation: generation) }
                 guard let approved = ComposerPromisedFileStorage.approvedRegularFile(output, in: directory) else { throw CocoaError(.fileReadUnknown) }
                 let checked = try await uploadPrivacyPreparation.checkFile(approved)
                 guard generation == attachmentCompactionGeneration,
                       accountGeneration == accountSessionGeneration,
-                      conversationChannelID(for: prompt.destination) == prompt.channelID,
+                      attachmentComposerContext(for: prompt.destination) == prompt.context,
                       isComposerDropEligible(prompt.destination)
                 else { return finishAttachmentCompaction(generation: generation) }
                 guard let size = checked.uploadSize else { throw CocoaError(.fileReadUnknown) }

@@ -300,7 +300,7 @@ struct CustomEmojiRichText: View {
                 profileRequestID: requestID
             )
         case let .role(id):
-            model.showMembers(withRole: id)
+            model.showMembers(withRole: id, in: model.selectedGuildID)
             presentedMention = AnchoredMentionPresentation(
                 mention: mention,
                 anchor: anchor,
@@ -348,7 +348,7 @@ private struct AnchoredMentionPopoverLayer: View {
                         )
                     }
                 case let .role(id):
-                    RoleMembersPopover(model: model, roleID: id)
+                    RoleMembersPopover(model: model, roleID: id, guildID: model.selectedGuildID)
                 case .unresolved, .guildNavigation, .channel, .linkedChannel, .message:
                     EmptyView()
                 }

@@ -29,7 +29,7 @@ manifests.
 | commit or push from a fresh clone | [docs/README.md — Developer and agent bootstrap](docs/README.md#developer-and-agent-bootstrap) |
 | push `main`, create a release tag, or change release automation | [docs/RELEASING.md](docs/RELEASING.md) |
 | use Computer Use against SakuraCord | run `./script/runtime.sh` and use the complete path from its `App:` line |
-| work on planned scope, priority, acceptance criteria, or progress | [Roadmap Management](plugin://roadmap-management@personal) |
+| work on planned scope, priority, acceptance criteria, or progress | [docs/README.md — Issues and roadmap](docs/README.md#issues-and-roadmap) |
 | draft release notes or a Discord release announcement | [RELEASE_NOTES_STYLE.md](docs/RELEASE_NOTES_STYLE.md) and [DISCORD_RELEASE_ANNOUNCEMENTS_STYLE.md](docs/DISCORD_RELEASE_ANNOUNCEMENTS_STYLE.md) |
 
 ## Further Information
@@ -50,8 +50,10 @@ manifests.
   use the current checkout's `script/run.sh --checkout PATH --build` so machine
   credential and signing preferences are passed explicitly and checked before
   launch. See [Development](docs/DEVELOPMENT.md#local-credential-mode).
-- Roadmap state belongs only in the deployed roadmap service. Repository code
-  and commits are evidence to assess, not proof that an item is complete.
+- Bug reports, suggestions, and planned work are GitHub Issues in this
+  repository; versions are milestones. When a commit or pull request fixes a
+  tracked issue, say `Fixes #N` so the hub moves it to In Nightly and later to
+  Shipped. Code and commits are evidence to assess, not proof an issue is done.
 - Keep documentation canonical. Update an existing source of truth instead of
   duplicating architecture, protocol, workflow, or planning information.
 - Preserve the release-branch invariant: `main` must always be an ancestor of

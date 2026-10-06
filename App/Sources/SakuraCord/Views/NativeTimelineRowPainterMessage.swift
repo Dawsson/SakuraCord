@@ -23,6 +23,7 @@ struct NativeTimelineMessageDrawInput {
     let pressedComponentButton: NativeTimelineComponentButtonTarget?
     let componentButtonPressProgress: CGFloat
     let isForwardedSourceHovered: Bool
+    let isEphemeralDismissHovered: Bool
     let hidesMessageContent: Bool
     let hoveredReactionID: String?
     let isAddReactionHovered: Bool
@@ -315,9 +316,7 @@ extension NativeTimelineRowPainter {
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current?.cgContext.setAlpha(
                 CGFloat(
-                    MessageOutboxPresentation.textOpacity(
-                        for: message.outboxState
-                    )
+                    MessageOutboxPresentation.textOpacity(for: message)
                 )
             )
             // CoreText requires the full fractional typographic line box to
@@ -731,7 +730,7 @@ extension NativeTimelineRowPainter {
             )
         }
         if let region = layout.ephemeralRegion {
-            ephemeralFooter(region)
+            ephemeralFooter(region, isDismissHovered: input.isEphemeralDismissHovered)
         }
         if let frame = layout.failedFrame {
             systemSymbol(
@@ -1105,7 +1104,7 @@ extension NativeTimelineRowPainter {
             yRadius: 4
         ).fill()
         systemSymbol(
-            "xmark.triangle.circle.square.fill",
+            SakuraCordSystemSymbol.applicationCommands,
             in: region.commandSymbolFrame,
             color: .sakuraCordAccentColor,
             inset: 0,
@@ -1126,7 +1125,8 @@ extension NativeTimelineRowPainter {
     }
 
     static func ephemeralFooter(
-        _ region: NativeTimelineRowLayout.EphemeralRegion
+        _ region: NativeTimelineRowLayout.EphemeralRegion,
+        isDismissHovered: Bool
     ) {
         systemSymbol(
             "eye",
@@ -1151,7 +1151,8 @@ extension NativeTimelineRowPainter {
             "Dismiss message",
             in: region.dismissFrame,
             font: font,
-            color: .sakuraCordAccentColor
+            color: .sakuraCordAccentColor,
+            isInteractiveHovered: isDismissHovered
         )
     }
 

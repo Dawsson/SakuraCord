@@ -64,6 +64,7 @@ extension NativeTimelineCanvasView {
         rowIndex: Int
     ) -> [NSAccessibilityCustomAction] {
         let message = row.message
+        guard MessageOutboxPresentation.interactionMode(for: message).allowsMessageContextMenu else { return [] }
         let canEdit = !message.hasPoll && message.author.id == model?.snapshot?.currentUser.id
             && MessageReplyPresentationPolicy.allowsReplyAction(for: message)
         let canDelete = model?.canDeleteMessage(message) == true

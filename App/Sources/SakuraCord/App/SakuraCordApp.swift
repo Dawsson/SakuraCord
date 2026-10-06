@@ -203,7 +203,8 @@ struct SakuraCordApp: App {
         .windowBackgroundDragBehavior(.disabled)
         .commands {
             SakuraCordCommands(
-                updateController: appDelegate.updateController
+                updateController: appDelegate.updateController,
+                model: model
             )
         }
 
@@ -222,6 +223,8 @@ struct SakuraCordApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// `NSApp.delegate` is SwiftUI's adaptor, not this object.
+    private(set) static weak var current: AppDelegate?
     let updateController: AppUpdateController
     weak var model: AppModel?
     private let notificationCenterDelegate = SakuraCordNotificationCenterDelegate()
@@ -235,6 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         updateController = AppUpdateController()
         super.init()
+        Self.current = self
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -269,6 +273,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidResignActive(_ notification: Notification) {
         model?.reportApplicationActive(false)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // Keep the account session and calls alive when the workspace closes.
+        // Explicit Quit still follows applicationShouldTerminate(_:).
+        false
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

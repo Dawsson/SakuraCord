@@ -757,68 +757,76 @@ extension NativeTimelineCanvasView {
         invalidateReactionPosters(for: removedKeys)
     }
 
-    static let maximumLoadingIndicatorCount = 32
+    static let maximumActivityIndicatorCount = 32
 
-    func reconcileLoadingIndicators() {
+    func reconcileActivityIndicators() {
         reconcileInboxHeaders()
         guard !items.isEmpty,
               var index = rowIndex(at: max(0, visibleRect.minY))
         else {
-            removeLoadingIndicators()
+            removeActivityIndicators()
             return
         }
 
-        var desired:
-            [NativeMessageTimelineItem.Identifier: CGRect] = [:]
-        desired.reserveCapacity(Self.maximumLoadingIndicatorCount)
+        var desired: [ActivityIndicatorKey: NativeTimelineRowLayout.ActivityIndicator] = [:]
+        desired.reserveCapacity(Self.maximumActivityIndicatorCount)
         while items.indices.contains(index),
               displayedRowOrigin(at: index) < visibleRect.maxY,
-              desired.count < Self.maximumLoadingIndicatorCount
+              desired.count < Self.maximumActivityIndicatorCount
         {
-            if layouts.indices.contains(index),
-               let frame = layouts[index].loadingIndicatorFrame
-            {
-                desired[items[index].identifier] = frame.offsetBy(
-                    dx: 0,
-                    dy: displayedRowOrigin(at: index)
-                )
+            if layouts.indices.contains(index) {
+                let origin = displayedRowOrigin(at: index)
+                for (position, indicator) in layouts[index].activityIndicators.enumerated() {
+                    desired[ActivityIndicatorKey(row: items[index].identifier, index: position)] = .init(
+                        frame: indicator.frame.offsetBy(dx: 0, dy: origin),
+                        style: indicator.style
+                    )
+                }
             }
             index += 1
         }
 
-        let desiredKeys = Set(desired.keys)
-        for key in Array(loadingIndicators.keys)
-        where !desiredKeys.contains(key) {
-            loadingIndicators.removeValue(forKey: key)?
-                .removeFromSuperview()
+        for (key, view) in activityIndicators
+        where desired[key].map({ !Self.view(view, matches: $0.style) }) ?? true {
+            view.removeFromSuperview()
+            activityIndicators.removeValue(forKey: key)
         }
-        for (key, frame) in desired {
-            let indicator: NativeTimelineLoadingIndicator
-            if let existing = loadingIndicators[key] {
-                indicator = existing
-            } else {
-                indicator = NativeTimelineLoadingIndicator(frame: frame)
-                addSubview(
-                    indicator,
-                    positioned: .below,
-                    relativeTo: mediaViewerHost
-                )
-                loadingIndicators[key] = indicator
-            }
-            if case .loader = key {
-                indicator.controlSize = .small
-            } else {
-                indicator.controlSize = .mini
-            }
-            indicator.frame = frame
+        for (key, indicator) in desired {
+            let view = activityIndicators[key] ?? {
+                let view = Self.makeActivityIndicator(indicator.style)
+                addSubview(view, positioned: .below, relativeTo: mediaViewerHost)
+                activityIndicators[key] = view
+                return view
+            }()
+            view.frame = indicator.frame
         }
     }
 
-    func removeLoadingIndicators() {
-        for indicator in loadingIndicators.values {
-            indicator.removeFromSuperview()
+    private static func makeActivityIndicator(_ style: NativeTimelineRowLayout.ActivityIndicator.Style) -> NSView {
+        switch style {
+        case .spinner:
+            let spinner = NativeTimelineLoadingIndicator(frame: .zero)
+            spinner.controlSize = .small
+            return spinner
+        case let .dots(tone):
+            let dots = InteractionLoadingDots(frame: .zero)
+            dots.tone = tone
+            return dots
         }
-        loadingIndicators.removeAll()
+    }
+
+    private static func view(_ view: NSView, matches style: NativeTimelineRowLayout.ActivityIndicator.Style) -> Bool {
+        switch style {
+        case .spinner: view is NativeTimelineLoadingIndicator
+        case let .dots(tone): (view as? InteractionLoadingDots)?.tone == tone
+        }
+    }
+
+    func removeActivityIndicators() {
+        for view in activityIndicators.values {
+            view.removeFromSuperview()
+        }
+        activityIndicators.removeAll()
     }
 
     static let maximumInlineVideoOverlayCount = 4

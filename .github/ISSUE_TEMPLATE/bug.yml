@@ -1,0 +1,91 @@
+name: 🐞 Bug report
+description: Something in SakuraCord is broken
+type: Bug
+labels:
+  - "status: new"
+body:
+  - type: markdown
+    attributes:
+      value: |-
+        Thanks for reporting a bug! Every report also gets a post in our [Discord](https://discord.gg/hWNwFXkUTP) and appears on [sakuracord.app/tracker](https://sakuracord.app/tracker). Please [search existing reports](https://sakuracord.app/tracker) first — a 👍 on an existing issue helps more than a duplicate.
+
+        <!-- Generated from SakuraCordApp/Roadmap src/report/schema.ts. Edit there, then run npm run issue-forms. -->
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: What you did, what happened, and what you expected instead
+      placeholder: I opened a thread with images and they stayed as grey boxes…
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |-
+        1. Open a server
+        2. Click a thread with images
+        3. …
+    validations:
+      required: false
+  - type: dropdown
+    id: impact
+    attributes:
+      label: How much does this affect you?
+      options:
+        - Crash, data loss, or I can't use SakuraCord
+        - Blocks something I need to do
+        - Annoying, but there's a workaround
+        - Minor or cosmetic
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SakuraCord version
+      description: Only the latest nightly or regular release. Update and retest first.
+      placeholder: e.g. 0.1.6 Beta 3
+    validations:
+      required: true
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Screenshots or recordings
+      description: Drag images or videos here.
+    validations:
+      required: false
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: e.g. macOS 27.0 beta 3 (27A5300)
+    validations:
+      required: false
+  - type: input
+    id: mac
+    attributes:
+      label: Mac model
+      placeholder: e.g. MacBook Pro (M3, 2023)
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Optional. We'll pick one if you're unsure
+      options:
+        - Chat & Messages
+        - Communication
+        - Servers & Roles
+        - Personalization
+        - Plugins
+        - Platform
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      placeholder: Logs, links, how often it happens, workarounds…
+    validations:
+      required: false

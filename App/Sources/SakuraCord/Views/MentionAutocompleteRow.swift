@@ -4,7 +4,7 @@ struct MentionAutocompleteRow: View {
     let suggestion: MentionAutocompleteSuggestion
     let isSelected: Bool
     let select: () -> Void
-    let highlight: () -> Void
+    var cornerRadius: CGFloat = ChatChromeMetrics.composerCornerRadius - 6
 
     var body: some View {
         Button(action: select) {
@@ -37,12 +37,11 @@ struct MentionAutocompleteRow: View {
             .frame(height: 40)
             .background(
                 isSelected ? Color.primary.opacity(0.10) : .clear,
-                in: ConcentricRectangle(cornerRadius: 7, style: .continuous)
+                in: ConcentricRectangle(cornerRadius: cornerRadius, style: .continuous)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onModalHover { if $0 { highlight() } }
     }
 
     @ViewBuilder

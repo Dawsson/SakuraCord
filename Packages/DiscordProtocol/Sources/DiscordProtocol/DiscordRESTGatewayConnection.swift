@@ -647,8 +647,10 @@ extension DiscordRESTProvider {
             task.cancel()
         }
         autocompleteTimeoutTasks = [:]
-        pendingAutocompleteTypes = [:]
-        pendingModalContexts = [:]
+        autocompleteOptionTypes = [:]
+        autocompleteNonceOrder = []
+        pendingInteractionContexts = [:]
+        pendingInteractionContextOrder = []
     }
 
     func publishEmojiCollection(

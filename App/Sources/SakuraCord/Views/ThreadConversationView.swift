@@ -235,7 +235,7 @@ private struct ThreadConversationFooter: View {
     }
 
     private var isForumPost: Bool {
-        model.selectedChannel?.kind == .forum
+        model.openThreadParentChannel?.kind == .forum
     }
 
     private var retryThreadLoad: (() -> Void)? {
@@ -533,7 +533,7 @@ private struct ThreadMessageTimelineView: View {
             title: thread.name,
             starterName: threadStarterName,
             startedAt: model.openThreadStartedAt,
-            isForumPost: model.selectedChannel?.kind == .forum
+            isForumPost: model.openThreadParentChannel?.kind == .forum
         )
     }
 
@@ -595,7 +595,7 @@ private struct ThreadMessageTimelineView: View {
         let summary = unreadSummary
         let dividerMessageID = loadedExactUnreadBoundaryMessageID
         let initialTarget = ThreadTimelinePresentationPolicy.initialScrollTarget(
-            isForumPost: model.selectedChannel?.kind == .forum,
+            isForumPost: model.openThreadParentChannel?.kind == .forum,
             hasUnreadReplies: summary != nil
         )
         return TimelineInitialPositionPolicy.targetWhenReady(

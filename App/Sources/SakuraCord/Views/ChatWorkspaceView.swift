@@ -8,34 +8,50 @@ struct ChatWorkspaceView: View {
     let toolbarSearchFieldMetrics: ToolbarSearchFieldMetrics
 
     @ViewBuilder var body: some View {
-        if let guildID = model.selectedGuildID, let page = model.guildWorkspacePage {
-            HStack(spacing: 0) {
-                Group {
-                    switch page {
-                    case .channelsAndRoles: GuildCustomizationView(model: model, guildID: guildID)
-                        .id("customization-\(guildID)-\(model.currentUser?.id.description ?? "")")
-                    case .guide: GuildGuideView(model: model, guildID: guildID)
-                        .id("guide-\(guildID)-\(model.currentUser?.id.description ?? "")")
+        Group {
+            if let guildID = model.selectedGuildID, let page = model.guildWorkspacePage {
+                HStack(spacing: 0) {
+                    Group {
+                        switch page {
+                        case .channelsAndRoles: GuildCustomizationView(model: model, guildID: guildID)
+                            .id("customization-\(guildID)-\(model.currentUser?.id.description ?? "")")
+                        case .guide: GuildGuideView(model: model, guildID: guildID)
+                            .id("guide-\(guildID)-\(model.currentUser?.id.description ?? "")")
+                        }
                     }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if model.customizationPreviewChannel != nil {
-                    Divider()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     if model.hasThreadPane {
+                        Divider()
                         ThreadConversationView(model: model)
-                    } else {
+                    } else if model.customizationPreviewChannel != nil {
+                        Divider()
                         SupplementaryConversationPane {
                             ChatDetailView(model: model)
                         }
+                    } else if page == .guide, let resource = model.onboarding.guides[guildID]?.resource {
+                        Divider()
+                        GuildResourceConversationView(model: model, guildID: guildID, resource: resource)
                     }
-                } else if page == .guide, let resource = model.onboarding.guides[guildID]?.resource {
-                    Divider()
-                    GuildResourceConversationView(model: model, guildID: guildID, resource: resource)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                conversation
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            conversation
+        }
+        .windowModal(
+            item: Binding(
+                get: { model.interactionModalForm },
+                set: {
+                    if $0 == nil {
+                        model.dismissInteractionModal()
+                    }
+                }
+            ),
+            cornerRadius: 32,
+            cornerStyle: .circular
+        ) { form in
+            InteractionModalView(model: model, form: form)
+                .windowModalDismissDisabled(form.isSubmitting)
         }
     }
 
@@ -87,18 +103,6 @@ struct ChatWorkspaceView: View {
             AppPerformanceSignposts.ensureConversationNavigation(
                 to: channelID
             )
-        }
-        .sheet(
-            item: Binding(
-                get: { model.presentedInteractionModal },
-                set: {
-                    if $0 == nil {
-                        model.dismissInteractionModal()
-                    }
-                }
-            )
-        ) { modal in
-            InteractionModalSheet(model: model, modal: modal)
         }
     }
 }

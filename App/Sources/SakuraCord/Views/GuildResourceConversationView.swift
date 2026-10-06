@@ -9,11 +9,23 @@ struct GuildResourceConversationView: View {
     var body: some View {
         SupplementaryConversationPane {
             VStack(spacing: 0) {
-                if let error = resource.error { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).padding(.horizontal, 24) }
+                if let error = resource.error {
+                    HStack {
+                        Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                        Button("Try Again") { model.loadGuideResource(guildID: guildID) }
+                            .buttonStyle(.glass)
+                            .disabled(resource.loading)
+                    }
+                    .padding(.horizontal, 24)
+                }
                 if resource.loading, resource.messages.isEmpty {
                     ProgressView("Loading resource…").frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if resource.messages.isEmpty {
-                    ContentUnavailableView("No Resource Content", systemImage: "doc.text", description: Text("This resource channel has no messages yet."))
+                    if resource.error != nil {
+                        ContentUnavailableView("Resource Unavailable", systemImage: "doc.text")
+                    } else {
+                        ContentUnavailableView("No Resource Content", systemImage: "doc.text", description: Text("This resource channel has no messages yet."))
+                    }
                 } else {
                     NativeMessageTimelineView(
                         model: model, conversation: .resource(guildID, resource.channelID), beginning: nil,

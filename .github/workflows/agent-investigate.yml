@@ -1,0 +1,63 @@
+name: Agent · Triage and investigate
+run-name: >-
+  ${{ github.event.label.name == 'agent: investigate' && format('Agent · Triage · #{0}', github.event.issue.number) || 'Agent · Skipped' }}
+
+# One read-only agent assesses every new report using the nightly codebase.
+# The hub applies the result and removes the trigger label after success.
+# A failed run keeps the label so it can be retried from Actions.
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: agent-investigate-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  investigate:
+    if: "github.event.label.name == 'agent: investigate'"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: nightly
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Record source commit
+        run: echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      # The default-branch copy of the agent files is trusted; nightly may differ.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .agent-control
+          sparse-checkout: .github/agents
+          persist-credentials: false
+      - name: Build prompt
+        run: node .agent-control/.github/agents/issue-context.mjs .agent-control/.github/agents/investigate.md "$RUNNER_TEMP/prompt.md" --triage
+      - name: Investigate with Codex
+        env:
+          GH_TOKEN: ""
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: ${{ runner.temp }}/prompt.md
+          output-schema-file: .agent-control/.github/agents/investigation.schema.json
+          output-file: ${{ runner.temp }}/investigation.json
+          model: ${{ vars.AGENT_INVESTIGATE_MODEL || 'gpt-6-luna' }}
+          effort: ${{ vars.AGENT_INVESTIGATE_EFFORT || 'high' }}
+          permission-profile: ":read-only"
+          allow-bot-users: ${{ vars.SAKURACORD_BOT_SLUG }}
+      - name: Post findings
+        env:
+          RESULT_PATH: ${{ runner.temp }}/investigation.json
+          AGENT_MODEL: ${{ vars.AGENT_INVESTIGATE_MODEL || 'gpt-6-luna' }}
+        run: node .agent-control/.github/agents/post-investigation.mjs

@@ -242,7 +242,9 @@ extension AppModel {
         currentUserRoleIDsByGuild = [:]
         supportedCapabilities = []
         componentInteractionPresentation = .init()
-        componentKeyByNonce = [:]
+        pendingInteractions = [:]
+        pendingInteractionOrder = []
+        interactionModalForm = nil
         credentialHandle = handle
         activeAccountID = handle.accountID
         didAttemptSessionRestore = true
@@ -420,7 +422,9 @@ extension AppModel {
             launchMode == .offlineTesting ? MockChatProvider() : SignedOutChatProvider()
         supportedCapabilities = []
         componentInteractionPresentation = .init()
-        componentKeyByNonce = [:]
+        pendingInteractions = [:]
+        pendingInteractionOrder = []
+        interactionModalForm = nil
         let signedOutDatabase = launchMode == .offlineTesting
             ? try? SakuraCordDatabase(inMemory: true)
             : nil
@@ -461,6 +465,7 @@ extension AppModel {
         resetTimelineLiveScrolling()
         clearReactionMutationState()
         pollVoteMutations.removeAll()
+        pollResultRefreshJournals.removeAll()
         stopLocalTyping(clearThrottle: true)
         typingState.clearAll()
         clientAppStateUpdateTask?.cancel()
@@ -502,15 +507,20 @@ extension AppModel {
         releaseAllOwnedPromisedFiles()
         oversizedAttachmentPrompt = nil
         queuedOversizedAttachmentPrompts.removeAll()
-        commandLoadTask?.cancel()
-        commandLoadTask = nil
-        commandAutocompleteTask?.cancel()
-        commandAutocompleteTask = nil
-        commandMemberSearchTask?.cancel()
-        commandMemberSearchTask = nil
-        commandMemberSearchQuery = nil
-        commandMemberSearchCache = [:]
-        commandMemberResults = []
+        for task in interactionDeadlineTasks.values { task.cancel() }
+        interactionDeadlineTasks = [:]
+        for commandComposer in commandComposers {
+            commandComposer.resetForChannelChange()
+            commandComposer.memberSearchCache = [:]
+        }
+        commandFrecencyLoadTask?.cancel()
+        commandFrecencyLoadTask = nil
+        commandFrecencyFlushTask?.cancel()
+        commandFrecencyFlushTask = nil
+        commandFrecencySaveTask?.cancel()
+        commandFrecencySaveTask = nil
+        deferredCommandFrecency = nil
+        cancelApplicationCommandAutocompleteTask()
         mentionMemberSearchTask?.cancel()
         mentionMemberSearchTask = nil
         mentionMemberSearchQuery = nil
@@ -523,8 +533,6 @@ extension AppModel {
         roleMemberResult = nil
         roleMemberErrorMessage = nil
         isLoadingRoleMembers = false
-        commandExecutionTask?.cancel()
-        commandExecutionTask = nil
         inspectorProfileTask?.cancel()
         inspectorProfileTask = nil
         contextualProfileTask?.cancel()

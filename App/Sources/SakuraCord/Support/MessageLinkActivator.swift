@@ -90,7 +90,8 @@ extension AppModel {
         userID: UserID,
         sourceMessage: Message? = nil
     ) -> User? {
-        if let member = membersByID[userID] {
+        let guildID = sourceMessage.map { messagePresentationGuildID(for: $0) } ?? selectedGuildID
+        if let member = profileMember(userID, in: guildID) {
             return member.user
         }
         let sourceUser = sourceMessage.flatMap { message -> User? in

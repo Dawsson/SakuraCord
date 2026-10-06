@@ -45,10 +45,10 @@ extension AppModel {
         }
         inbox.groups[index].events = visibleInboxEvents(for: group)
         inbox.groups[index].isLoaded = true
-        inbox.hasMore = inbox.groups.contains { !$0.isLoaded && !$0.isCollapsed }
+        inbox.groups[index].needsRevalidation = false
     }
 
-    private func visibleInboxEvents(for group: InboxUnreadGroup) -> [InboxScheduledEvent] {
+    func visibleInboxEvents(for group: InboxUnreadGroup) -> [InboxScheduledEvent] {
         inbox.scheduledEvents.events.filter {
             $0.guildID == group.guildID && ($0.status == 1 || $0.status == 2)
                 && $0.id.rawValue > (group.oldestReadMessageID?.rawValue ?? 0)

@@ -16,10 +16,16 @@ final class WindowModalCoordinator {
     private final class Entry {
         weak var host: WindowModalHostingView?
         weak var previousResponder: NSResponder?
+        let accessories = NSHashTable<NSView>.weakObjects()
 
         init(host: WindowModalHostingView, previousResponder: NSResponder?) {
             self.host = host
             self.previousResponder = previousResponder
+        }
+
+        func contains(_ view: NSView) -> Bool {
+            if let host, view === host || view.isDescendant(of: host) { return true }
+            return accessories.allObjects.contains { view === $0 || view.isDescendant(of: $0) }
         }
     }
 
@@ -54,7 +60,19 @@ final class WindowModalCoordinator {
 
     func allowsInput(to view: NSView) -> Bool {
         guard let topmost else { return true }
-        return view === topmost || view.isDescendant(of: topmost)
+        return entries.last { $0.host === topmost }?.contains(view) == true
+    }
+
+    /// Floating controls must be siblings of the modal's SwiftUI host to render
+    /// outside its glass composition, but still belong to that modal for input.
+    func registerAccessory(_ view: NSView, from source: NSView) {
+        guard let entry = entries.last(where: { $0.contains(source) }) else { return }
+        entry.accessories.add(view)
+        reorderHosts()
+    }
+
+    func unregisterAccessory(_ view: NSView) {
+        for entry in entries { entry.accessories.remove(view) }
     }
 
     func present(_ host: WindowModalHostingView) {
@@ -73,10 +91,11 @@ final class WindowModalCoordinator {
         // A covered modal can disappear before its child. Repair the focus chain.
         for entry in entries.dropFirst(index + 1) {
             if let view = entry.previousResponder as? NSView,
-               view === host || view.isDescendant(of: host) {
+               entries[index].contains(view) {
                 entry.previousResponder = previous
             }
         }
+        for accessory in entries[index].accessories.allObjects { accessory.removeFromSuperview() }
         entries.remove(at: index)
         host.animationState.isInputActive = false
         reorderHosts()
@@ -100,6 +119,10 @@ final class WindowModalCoordinator {
             guard let host = entry.host, let container = host.superview else { continue }
             host.layer?.zPosition = CGFloat(100_000 + index)
             container.addSubview(host, positioned: .above, relativeTo: nil)
+            for accessory in entry.accessories.allObjects {
+                accessory.layer?.zPosition = CGFloat(100_000 + index) + 0.5
+                container.addSubview(accessory, positioned: .above, relativeTo: host)
+            }
         }
     }
 

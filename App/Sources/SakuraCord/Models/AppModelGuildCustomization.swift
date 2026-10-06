@@ -76,6 +76,9 @@ extension AppModel {
         }
         onboarding.previewChannelID = nil
         onboarding.previewReturnChannelID = nil
+        if let selectedChannelID, !isConversationPresented(selectedChannelID) {
+            suspendSelectedConversationPresentation()
+        }
     }
 
     func synchronizeVisibleCustomization(guildID: GuildID?) {

@@ -280,9 +280,7 @@ extension NativeMessageTimelineCoordinator {
         ) -> NativeTimelineRowLayout {
             if let preparation = layoutPreparation,
                preparation.isComplete,
-               preparation.presentationRevision == parent.presentationRevision,
-               preparation.inviteRevision == parent.model.serverInvites.revision,
-               abs(preparation.width - width) < 0.5,
+               preparation.matches(parent, width: width),
                let cached = preparation.layouts[item.identifier],
                cached.item == item,
                cached.layout.fontRevision == ProfileNameFontCache.revision {
@@ -922,6 +920,7 @@ extension NativeMessageTimelineCoordinator {
             let sourceItems = items
             let metrics = NativeTimelineRowLayout.Metrics(settings: parent.model.interfaceSettings)
             let sourceConversation = parent.conversation
+            let sourceTimestampDay = timestampDay
             let sourcePresentationRevision = parent.presentationRevision
             let sourceInviteRevision = parent.model.serverInvites.revision
             let visibleRange = visibleItemRangeForWidthRelayout()
@@ -974,8 +973,8 @@ extension NativeMessageTimelineCoordinator {
                     }
                 )
                 let canReusePreparedPresentation =
-                    self.parent.presentationRevision
-                        == sourcePresentationRevision
+                    sourceTimestampDay == Calendar.autoupdatingCurrent.startOfDay(for: .now)
+                        && self.parent.presentationRevision == sourcePresentationRevision
                         && self.parent.model.serverInvites.revision == sourceInviteRevision
                 let finalLayouts = self.items.map { item in
                     if canReusePreparedPresentation,
@@ -1021,6 +1020,8 @@ extension NativeMessageTimelineCoordinator {
                         result.append(contentsOf: group.forumPosts.map(NativeMessageTimelineItem.inboxForumPost))
                         result.append(contentsOf: group.messages.compactMap { rowsByID[$0.id] }.map { messageItem($0, from: parent) })
                         if !group.isLoaded { break }
+                    } else if let canvas {
+                        result.append(contentsOf: canvas.heldInboxItems(for: group.id))
                     }
                 }
                 return result

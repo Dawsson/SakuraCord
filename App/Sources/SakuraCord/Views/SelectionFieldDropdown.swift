@@ -34,6 +34,7 @@ struct SelectionFieldDropdown<Content: View>: NSViewRepresentable {
         var requestedHeight: CGFloat = 260
         var makeContent: (CGFloat) -> AnyView = { _ in AnyView(EmptyView()) }
         private var host: NSHostingView<AnyView>?
+        private weak var modalCoordinator: WindowModalCoordinator?
         private var presentation = SelectionFieldDropdownPresentation()
         private var mouseMonitor: Any?
         private var observers: [NSObjectProtocol] = []
@@ -52,7 +53,7 @@ struct SelectionFieldDropdown<Content: View>: NSViewRepresentable {
 
         private var container: NSView? {
             guard let window else { return nil }
-            return WindowModalCoordinator.coordinator(for: window).topmost ?? window.contentView?.superview ?? window.contentView
+            return window.contentView?.superview ?? window.contentView
         }
 
         private func show() {
@@ -68,6 +69,11 @@ struct SelectionFieldDropdown<Content: View>: NSViewRepresentable {
                 host.layer?.zPosition = 90_000
                 container.addSubview(host, positioned: .above, relativeTo: nil)
                 self.host = host
+                if let window {
+                    let coordinator = WindowModalCoordinator.coordinator(for: window)
+                    coordinator.registerAccessory(host, from: self)
+                    modalCoordinator = coordinator
+                }
                 installObservers()
             }
             position()
@@ -116,6 +122,8 @@ struct SelectionFieldDropdown<Content: View>: NSViewRepresentable {
         func removeDropdown() {
             removalTask?.cancel()
             removalTask = nil
+            if let host { modalCoordinator?.unregisterAccessory(host) }
+            modalCoordinator = nil
             host?.removeFromSuperview()
             host = nil
             if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }

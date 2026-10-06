@@ -186,8 +186,8 @@ struct ApplicationCommandScenario {
 
         let modalTask = Task { () -> InteractionModal? in
             for await event in events {
-                if case let .interaction(.presentModal(nonce, modal)) = event,
-                   nonce == "command-nonce"
+                if case let .interaction(.presentModal(modal)) = event,
+                   modal.openingNonce == "command-nonce"
                 {
                     return modal
                 }
@@ -197,6 +197,7 @@ struct ApplicationCommandScenario {
         await socket.push(gatewayMessage(
             op: 0,
             data: .object([
+                "id": .string("777"),
                 "nonce": .string("command-nonce"),
                 "application_id": .string("900"),
                 "channel_id": .string("200"),
@@ -231,15 +232,18 @@ struct ApplicationCommandScenario {
         #expect(modal.controls.count == 2)
         try await provider.submitModal(
             ModalSubmission(
-                customID: modal.customID,
-                values: ["comment": ["Looks good"], "follow-up": ["true"]]
-            ),
-            nonce: "command-nonce"
+                modal: modal,
+                values: ["comment": .text("Looks good"), "follow-up": .checkbox(true)],
+                nonce: "modal-nonce"
+            )
         )
         #expect(RateLimitURLProtocol.interactionRequestCount == 4)
         let modalBody = try #require(RateLimitURLProtocol.interactionBodies.last)
         #expect((modalBody["type"] as? NSNumber)?.intValue == 5)
+        // A submission is a new interaction; data.id names the one that opened it.
+        #expect(modalBody["nonce"] as? String == "modal-nonce")
         let modalData = try #require(modalBody["data"] as? [String: Any])
+        #expect(modalData["id"] as? String == "777")
         #expect(modalData["custom_id"] as? String == "feedback")
         let modalComponents = try #require(modalData["components"] as? [[String: Any]])
         #expect((modalComponents[0]["type"] as? NSNumber)?.intValue == 18)

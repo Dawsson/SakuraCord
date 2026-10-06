@@ -83,7 +83,7 @@ struct SelectionFieldMenu<ID: Hashable & Sendable>: View {
     private func canToggle(_ id: ID) -> Bool {
         guard model.state == .loaded else { return false }
         if selection.contains(id) {
-            return mode == .single || selection.count > configuration.minimumSelectionCount
+            return true
         }
         return mode == .single || mode.maximum.map { selection.count < $0 } ?? true
     }

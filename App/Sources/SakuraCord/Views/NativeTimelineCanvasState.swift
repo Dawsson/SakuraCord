@@ -49,6 +49,7 @@ final class NativeTimelinePointerState {
         let codeBlock: NativeTimelineCodeBlockPointerTarget?
         let componentButton: NativeTimelineComponentButtonTarget?
         let forwardedSourceMessageID: MessageID?
+        let ephemeralDismissMessageID: MessageID?
     }
 
     var hoveredRow: Int?
@@ -61,6 +62,7 @@ final class NativeTimelinePointerState {
     var pressedCodeBlockCopyButton: NativeTimelineCodeBlockPointerTarget?
     var hoveredComponentButton: NativeTimelineComponentButtonTarget?
     var hoveredForwardedSourceMessageID: MessageID?
+    var hoveredEphemeralDismissMessageID: MessageID?
     var pressedComponentButton: NativeTimelineComponentButtonTarget?
     var visualPressedComponentButton: NativeTimelineComponentButtonTarget?
     var componentButtonPressProgress: CGFloat = 0
@@ -88,7 +90,8 @@ final class NativeTimelinePointerState {
             codeBlock: hoveredCodeBlock,
             componentButton:
                 visualPressedComponentButton ?? hoveredComponentButton,
-            forwardedSourceMessageID: hoveredForwardedSourceMessageID
+            forwardedSourceMessageID: hoveredForwardedSourceMessageID,
+            ephemeralDismissMessageID: hoveredEphemeralDismissMessageID
         )
         hoveredRow = nil
         hoveredCompactTimestampRow = nil
@@ -100,6 +103,7 @@ final class NativeTimelinePointerState {
         pressedCodeBlockCopyButton = nil
         hoveredComponentButton = nil
         hoveredForwardedSourceMessageID = nil
+        hoveredEphemeralDismissMessageID = nil
         pressedComponentButton = nil
         visualPressedComponentButton = nil
         componentButtonPressProgress = 0
@@ -139,6 +143,7 @@ final class NativeTimelinePointerState {
             || pressedCodeBlockCopyButton != nil
             || hoveredComponentButton != nil
             || hoveredForwardedSourceMessageID != nil
+            || hoveredEphemeralDismissMessageID != nil
             || pressedComponentButton != nil
             || visualPressedComponentButton != nil
             || componentButtonPressProgress != 0
@@ -294,6 +299,11 @@ extension NativeTimelineCanvasView {
     var hoveredForwardedSourceMessageID: MessageID? {
         get { pointer.hoveredForwardedSourceMessageID }
         set { pointer.hoveredForwardedSourceMessageID = newValue }
+    }
+
+    var hoveredEphemeralDismissMessageID: MessageID? {
+        get { pointer.hoveredEphemeralDismissMessageID }
+        set { pointer.hoveredEphemeralDismissMessageID = newValue }
     }
 
     var pressedComponentButton: NativeTimelineComponentButtonTarget? {

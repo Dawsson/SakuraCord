@@ -234,6 +234,12 @@ final class NativeTimelineCanvasView: NSView, WindowModalInputParticipant {
     var inboxEventHosts: [ScheduledEventID: NSHostingView<InboxScheduledEventView>] = [:]
     var inboxForumPostHosts: [ChannelID: NSHostingView<InboxForumPostView>] = [:]
     var inboxHeaderHosts: [ChannelID: NSHostingView<InboxGroupHeaderView>] = [:]
+    var inboxDisclosure: NativeTimelineInboxDisclosure?
+    var inboxDisclosureRange: Range<Int> = 0 ..< 0
+    var inboxDisclosureShift: CGFloat = 0
+    var inboxDisclosureClipMaxY = CGFloat.greatestFiniteMagnitude
+    var inboxDisclosureMaskedViews: [NSView] = []
+    let inboxDisclosureTicker = NativeTimelineDisplayLinkTicker()
     var model: AppModel?
     var accessibilitySettingsSnapshot = AccessibilitySettingsSnapshot.defaults
     var presentedConversationID: ChannelID?
@@ -300,9 +306,12 @@ final class NativeTimelineCanvasView: NSView, WindowModalInputParticipant {
         [LottieStickerOverlayKey: NativeTimelineLottieStickerOverlay] = [:]
     var animatedMediaOverlays:
         [AnimatedMediaOverlayKey: NativeTimelineAnimatedMediaOverlay] = [:]
-    var loadingIndicators:
-        [NativeMessageTimelineItem.Identifier:
-            NativeTimelineLoadingIndicator] = [:]
+    struct ActivityIndicatorKey: Hashable {
+        let row: NativeMessageTimelineItem.Identifier
+        let index: Int
+    }
+
+    var activityIndicators: [ActivityIndicatorKey: NSView] = [:]
     var spoilerOverlays:
         [NativeTimelineComponentRevealKey:
             NativeTimelineSpoilerOverlayHost] = [:]
@@ -357,6 +366,8 @@ final class NativeTimelineCanvasView: NSView, WindowModalInputParticipant {
         mediaViewerHost.frame = .zero
         addSubview(mediaViewerHost)
         let notificationCenter = NotificationCenter.default
+        notificationCenter.addObserver(self, selector: #selector(composerOverlayDidChange(_:)),
+                                       name: ComposerOverlayPointerRegion.changed, object: nil)
         notificationCenter.addObserver(self, selector: #selector(restoreInboxKeyboardFocus),
                                        name: NSApplication.didBecomeActiveNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -390,6 +401,7 @@ final class NativeTimelineCanvasView: NSView, WindowModalInputParticipant {
             NSWorkspace.shared.notificationCenter.removeObserver(self)
             pollClockTask?.cancel()
             pollAnimationTicker.stop()
+            inboxDisclosureTicker.stop()
             pollPopover?.close()
             mediaInvalidationTask?.cancel()
             visibleMediaRequestTask?.cancel()
@@ -452,6 +464,7 @@ enum NativeTimelineRowPainter {
             NativeTimelineComponentButtonTarget? = nil,
         componentButtonPressProgress: CGFloat = 0,
         isForwardedSourceHovered: Bool = false,
+        isEphemeralDismissHovered: Bool = false,
         hidesMessageContent: Bool = false,
         hoveredReactionID: String? = nil,
         isAddReactionHovered: Bool = false,
@@ -522,6 +535,7 @@ enum NativeTimelineRowPainter {
                 componentButtonPressProgress:
                     componentButtonPressProgress,
                 isForwardedSourceHovered: isForwardedSourceHovered,
+                isEphemeralDismissHovered: isEphemeralDismissHovered,
                 hidesMessageContent: hidesMessageContent,
                 hoveredReactionID: hoveredReactionID,
                 isAddReactionHovered: isAddReactionHovered,

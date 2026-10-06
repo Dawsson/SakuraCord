@@ -209,6 +209,7 @@ public enum OutboxState: String, Codable, Hashable, Sendable {
 public struct MessageReplyPreview: Codable, Hashable, Sendable {
     public var messageID: MessageID
     public var author: User
+    public var webhookID: String?
     public var guildMember: MessageGuildMember?
     public var content: String
     public var mediaKind: AttachmentMediaKind?
@@ -217,11 +218,13 @@ public struct MessageReplyPreview: Codable, Hashable, Sendable {
         messageID: MessageID,
         author: User,
         guildMember: MessageGuildMember? = nil,
+        webhookID: String? = nil,
         content: String,
         mediaKind: AttachmentMediaKind? = nil
     ) {
         self.messageID = messageID
         self.author = author
+        self.webhookID = webhookID
         self.guildMember = guildMember
         self.content = content
         self.mediaKind = mediaKind
@@ -232,6 +235,7 @@ public struct MessageReplyPreview: Codable, Hashable, Sendable {
             messageID: message.id,
             author: message.author,
             guildMember: message.guildMember,
+            webhookID: message.webhookID,
             content: message.content,
             mediaKind: Self.mediaKind(
                 attachments: message.attachments,
@@ -305,6 +309,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public let id: MessageID
     public var channelID: ChannelID
     public var author: User
+    public var webhookID: String?
     public var guildMember: MessageGuildMember?
     public var content: String
     public var timestamp: Date
@@ -343,6 +348,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         channelID: ChannelID,
         author: User,
         guildMember: MessageGuildMember? = nil,
+        webhookID: String? = nil,
         content: String,
         timestamp: Date = .now,
         editedTimestamp: Date? = nil,
@@ -378,6 +384,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         self.id = id
         self.channelID = channelID
         self.author = author
+        self.webhookID = webhookID
         self.guildMember = guildMember
         self.content = content
         self.timestamp = timestamp
@@ -416,7 +423,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         case id, channelID, author, guildMember, content, timestamp, editedTimestamp, replyTo,
              replyPreview
         case attachments, reactions, isPinned, nonce, outboxState, type, flags, applicationID, application
-        case interactionMetadata, guildID
+        case interactionMetadata, guildID, webhookID
         case embeds, components, stickers, thread, mentionedUsers, mentionedRoleIDs, mentionsEveryone
         case call, poll, hasPoll, hasActivity, hasSharedClientTheme, hasActivityInstance
         case messageReference, forwardedSnapshot
@@ -428,6 +435,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         channelID = try values.decode(ChannelID.self, forKey: .channelID)
         author = try values.decode(User.self, forKey: .author)
         guildMember = try values.decodeIfPresent(MessageGuildMember.self, forKey: .guildMember)
+        webhookID = try values.decodeIfPresent(String.self, forKey: .webhookID)
         content = try values.decodeIfPresent(String.self, forKey: .content) ?? ""
         timestamp = try values.decodeIfPresent(Date.self, forKey: .timestamp) ?? .distantPast
         editedTimestamp = try values.decodeIfPresent(Date.self, forKey: .editedTimestamp)
@@ -501,13 +509,16 @@ public struct SendMessageDraft: Equatable, Sendable {
     public var nonce: String
     public var stickerIDs: [String]
     public var poll: PollDraft?
+    /// Read aloud to members viewing the channel, as Discord's `/tts` sends.
+    public var isTTS: Bool
 
     public init(
         channelID: ChannelID, content: String, replyTo: MessageID? = nil,
         mentionsRepliedUser: Bool = true,
         attachmentURLs: [URL] = [],
         attachments: [ForumPostAttachment]? = nil,
-        nonce: String = ClientNonce.make(), stickerIDs: [String] = [], poll: PollDraft? = nil
+        nonce: String = ClientNonce.make(), stickerIDs: [String] = [], poll: PollDraft? = nil,
+        isTTS: Bool = false
     ) {
         self.channelID = channelID
         self.content = content
@@ -518,5 +529,6 @@ public struct SendMessageDraft: Equatable, Sendable {
         self.nonce = nonce
         self.stickerIDs = stickerIDs
         self.poll = poll
+        self.isTTS = isTTS
     }
 }

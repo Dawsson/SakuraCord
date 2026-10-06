@@ -253,7 +253,7 @@ final class MessageRowPresentation: Identifiable, Equatable, Sendable {
 
 nonisolated enum MessageReplyPresentationPolicy {
     static func allowsReplyAction(for message: Message) -> Bool {
-        !message.type.hasGeneratedContent || message.type == .userJoin
+        !message.flags.contains(.ephemeral) && (!message.type.hasGeneratedContent || message.type == .userJoin)
     }
 
     static func showsPreview(for message: Message) -> Bool {
@@ -846,11 +846,20 @@ nonisolated enum MessageGrouping {
     ) -> Bool {
         isGroupable(previous)
             && isGroupable(message)
-            && previous.author.id == message.author.id
+            && sharesAuthorIdentity(previous, message)
             && message.replyTo == nil
             && message.timestamp.timeIntervalSince(previous.timestamp) >= 0
             && message.timestamp.timeIntervalSince(previous.timestamp) < continuationInterval
             && calendar.isDate(previous.timestamp, inSameDayAs: message.timestamp)
+    }
+
+    /// One webhook ID posts under many names and avatars; Discord starts a
+    /// new group whenever that presented identity changes.
+    private static func sharesAuthorIdentity(_ previous: Message, _ message: Message) -> Bool {
+        guard previous.author.id == message.author.id else { return false }
+        guard message.webhookID != nil || previous.webhookID != nil else { return true }
+        return previous.author.displayName == message.author.displayName
+            && previous.author.avatarURL == message.author.avatarURL
     }
 
     private static func endsGroup(

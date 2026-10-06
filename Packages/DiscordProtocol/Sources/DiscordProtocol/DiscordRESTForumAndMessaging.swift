@@ -14,7 +14,7 @@ extension DiscordRESTProvider {
         switch query.scope {
         case .active:
             let cachedPosts = Array(cachedForumPosts[channelID, default: [:]].values)
-            if query.offset == 0, !cachedPosts.isEmpty {
+            if !query.requiresFreshPage, query.offset == 0, !cachedPosts.isEmpty {
                 let immediatePosts = Self.filteredAndSortedForumPosts(
                     cachedPosts,
                     query: query
@@ -43,7 +43,7 @@ extension DiscordRESTProvider {
                 return page
             } catch {
                 if Task.isCancelled { throw CancellationError() }
-                guard !cachedPosts.isEmpty else { throw error }
+                guard !query.requiresFreshPage, !cachedPosts.isEmpty else { throw error }
                 gatewayLogger.warning(
                     "Older forum-post pagination failed; retaining cached posts for channel \(channelID)"
                 )

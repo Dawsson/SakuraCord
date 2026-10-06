@@ -162,7 +162,7 @@ public struct MessageDocument: Hashable, Sendable {
             let token = String(source[range])
             if let emoji = RenderedEmoji(rawToken: token) {
                 result.append(.customEmoji(emoji))
-            } else if let mention = RenderedMention(rawToken: token) {
+            } else if !isMaskedLinkTarget(range, in: source), let mention = RenderedMention(rawToken: token) {
                 result.append(.mention(mention))
             } else {
                 result.append(.markdown(token))
@@ -172,7 +172,20 @@ public struct MessageDocument: Hashable, Sendable {
         if cursor < source.endIndex {
             result.append(.markdown(String(source[cursor...])))
         }
-        return result
+        // Markdown must see a masked link and its target as one run.
+        return result.reduce(into: []) { merged, segment in
+            if case let .markdown(next) = segment, case let .markdown(previous)? = merged.last {
+                merged[merged.count - 1] = .markdown(previous + next)
+            } else {
+                merged.append(segment)
+            }
+        }
+    }
+
+    /// `[label](https://discord.com/channels/…)` is a masked link, as in
+    /// Discord, not a message-link pill.
+    private static func isMaskedLinkTarget(_ range: Range<String.Index>, in source: String) -> Bool {
+        source[..<range.lowerBound].hasSuffix("](") && source[range.upperBound...].hasPrefix(")")
     }
 
     private static func detectEmojiOnly(source: String, segments: [Segment]) -> Bool {

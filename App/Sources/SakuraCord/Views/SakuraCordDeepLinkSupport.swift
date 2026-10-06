@@ -7,9 +7,16 @@ nonisolated enum SakuraCordDeepLinkAction: Hashable, Sendable {
     case checkForUpdates
     case applyTheme(SakuraCordSharedTheme)
     case updateToApplyTheme(preview: SakuraCordSharedTheme?)
+    case startIssueReport(IssueReportKind?)
 
     var title: String {
         switch self {
+        case .startIssueReport(.bug):
+            "Report a Bug"
+        case .startIssueReport(.feature):
+            "Suggest a Feature"
+        case .startIssueReport(nil):
+            "Report a Bug or Suggest a Feature"
         case let .openSettings(destination):
             destination.title
         case .sendDiagnostics:
@@ -35,6 +42,8 @@ nonisolated enum SakuraCordDeepLinkAction: Hashable, Sendable {
             "Apply this shared SakuraCord theme."
         case .updateToApplyTheme:
             "Update SakuraCord to use this newer theme format."
+        case .startIssueReport:
+            "File it from SakuraCord with your Discord account."
         }
     }
 
@@ -48,11 +57,21 @@ nonisolated enum SakuraCordDeepLinkAction: Hashable, Sendable {
             "Check for Updates"
         case .applyTheme:
             "Apply Theme"
+        case .startIssueReport(.bug):
+            "Report a Bug…"
+        case .startIssueReport(.feature):
+            "Suggest a Feature…"
+        case .startIssueReport(nil):
+            "Get Started…"
         }
     }
 
     var systemImage: String {
         switch self {
+        case .startIssueReport(.feature):
+            "lightbulb.max.fill"
+        case .startIssueReport:
+            "ladybug.fill"
         case let .openSettings(destination):
             destination.metadata.systemImage
         case .sendDiagnostics:
@@ -76,12 +95,14 @@ nonisolated enum SakuraCordDeepLinkAction: Hashable, Sendable {
             "sakuracord-deeplink-apply-theme"
         case .updateToApplyTheme:
             "sakuracord-deeplink-update-to-apply-theme"
+        case let .startIssueReport(kind):
+            "sakuracord-deeplink-report-\(kind?.rawValue ?? "any")"
         }
     }
 
     var themePreview: SakuraCordSharedTheme? {
         switch self {
-        case .openSettings, .sendDiagnostics:
+        case .openSettings, .sendDiagnostics, .startIssueReport:
             nil
         case .checkForUpdates:
             nil
@@ -104,6 +125,10 @@ nonisolated enum SakuraCordDeepLinkAction: Hashable, Sendable {
             "Applies the shared SakuraCord theme"
         case .updateToApplyTheme:
             "Checks for an update that supports this theme"
+        case .startIssueReport(.feature):
+            "Opens SakuraCord's feature suggestion form"
+        case .startIssueReport:
+            "Opens SakuraCord's bug report form"
         }
     }
 }
@@ -146,6 +171,11 @@ nonisolated enum SakuraCordDeepLinkPresentation {
         else { return nil }
 
         let pathComponents = components.path.split(separator: "/")
+        if pathComponents == ["report"] {
+            // Older Help-menu links also carry prefilled diagnostics; SakuraCord fills its own.
+            let type = components.queryItems?.last { $0.name == "type" }?.value
+            return .startIssueReport(type.flatMap(IssueReportKind.init(rawValue:)))
+        }
         if pathComponents == ["settings", "update"] {
             return .checkForUpdates
         }

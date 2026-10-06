@@ -20,6 +20,10 @@ extension AppModel {
                 includesEveryone: preferences.object(forKey: "dev.sakuracord.inbox-include-everyone") as? Bool ?? true
             )
         } else if inbox.query.guildID != nil { inbox.query.guildID = selectedGuildID }
+        inbox.scrollRequest = MessageTimelineScrollRequest(target: .top)
+        inbox.selectedMessageID = nil
+        inbox.locallyUndoneEventGuilds = []
+        inbox.undoGroups = []
         refreshInbox()
     }
 
@@ -32,7 +36,8 @@ extension AppModel {
             preferences.set(inbox.query.includesRoles, forKey: "dev.sakuracord.inbox-include-roles")
             preferences.set(inbox.query.includesEveryone, forKey: "dev.sakuracord.inbox-include-everyone")
         }
-        refreshInbox()
+        inbox.scrollRequest = MessageTimelineScrollRequest(target: .top)
+        resumeInbox()
     }
 
     func dismissInbox() {
@@ -40,34 +45,66 @@ extension AppModel {
         inbox.cancelLoad()
     }
 
+    /// Switches tabs from retained content; Discord learns the final choice once.
     func selectInboxTab(_ tab: InboxTab) {
         guard inbox.tab != tab else { return }
         inbox.tab = tab
-        refreshInbox()
-        saveInboxSettings { try await $0.updateInboxTab(tab) }
+        inbox.pendingTab = tab
+        inbox.selectedMessageID = nil
+        inbox.scrollRequest = MessageTimelineScrollRequest(target: .top)
+        resumeInbox()
+        scheduleInboxSettingsSync()
     }
 
+    /// Rebuilds unread groups from read state, keeping content for unchanged
+    /// ranges, and quietly revalidates the newest mentions.
     func refreshInbox() {
+        rebuildInboxUnreadGroups()
+        inbox.needsMentionRevalidation = true
+        resumeInbox()
+    }
+
+    /// An explicit refresh also refetches content that is already shown.
+    func reloadInbox() {
+        rebuildInboxUnreadGroups()
+        for index in inbox.groups.indices where inbox.groups[index].isLoaded && !inbox.groups[index].isAgeRestricted {
+            inbox.groups[index].needsRevalidation = true
+        }
+        inbox.needsMentionRevalidation = true
+        inbox.isRefreshing = true
+        resumeInbox()
+    }
+
+    private func rebuildInboxUnreadGroups() {
+        let retained = Dictionary(inbox.groups.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        inbox.groups = makeInboxUnreadGroups().map { fresh in
+            guard let previous = retained[fresh.id], fresh.canReuseContent(of: previous) else { return fresh }
+            var group = fresh
+            group.messages = previous.messages
+            group.forumPosts = previous.forumPosts
+            group.events = group.isEvents ? visibleInboxEvents(for: group) : []
+            group.isLoaded = true
+            return group
+        }
+        inbox.unreadOrder = inbox.groups.map(\.id)
+    }
+
+    /// Presents the current tab immediately and fetches only what it lacks.
+    private func resumeInbox() {
         inbox.cancelLoad()
-        inbox.scrollRequest = MessageTimelineScrollRequest(target: .top)
-        inbox.selectedMessageID = nil
         inbox.errorMessage = nil
-        inbox.locallyUndoneEventGuilds = []
-        inbox.nextBefore = nil
         inbox.removedIDs = []
         inbox.deletedIDs = []
-        inbox.replacements = [:]
-        if inbox.tab == .unread {
-            inbox.groups = makeInboxUnreadGroups()
-            inbox.unreadOrder = inbox.groups.map(\.id)
-            inbox.undoGroups = []
-            inbox.hasMore = inbox.groups.contains { !$0.isCollapsed }
-        } else {
+        if inbox.mentionsQuery != inbox.query {
             inbox.mentions = []
-            inbox.hasMore = true
+            inbox.nextBefore = nil
+            inbox.hasMoreMentions = true
+            inbox.needsMentionRevalidation = false
+            inbox.mentionsQuery = inbox.query
         }
         publishInbox()
-        loadMoreInbox()
+        // Retained mentions page further only as the user scrolls.
+        if inbox.tab == .unread || inbox.mentions.isEmpty || inbox.needsMentionRevalidation { loadMoreInbox() }
     }
 
     func retryInboxLoad() {
@@ -76,27 +113,39 @@ extension AppModel {
     }
 
     func loadMoreInbox() {
-        guard inbox.isPresented, !inbox.isLoading, inbox.hasMore, inbox.errorMessage == nil else { return }
+        let revalidatesMentions = inbox.tab == .mentions && inbox.needsMentionRevalidation
+        guard inbox.isPresented, !inbox.isLoading, inbox.hasMore || revalidatesMentions, inbox.errorMessage == nil else {
+            if !inbox.isLoading { inbox.isRefreshing = false }
+            return
+        }
         let session = accountSession()
         let generation = inbox.generation
         let tab = inbox.tab
         let query = inbox.query
         let before = inbox.nextBefore
         let group = inbox.groups.first { !$0.isLoaded && !$0.isCollapsed }
-        if tab == .unread, group == nil { inbox.hasMore = false; return }
+            ?? inbox.groups.first { $0.needsRevalidation && !$0.isCollapsed }
+        if tab == .unread, group == nil {
+            inbox.isRefreshing = false
+            return
+        }
         inbox.isLoading = true
+        inbox.refreshJournal = ConversationRefreshJournal(revision: generation)
         inbox.loadTask = Task { [weak self] in
             guard let self else { return }
-            var continuesAfterEmptyGroup = false
+            var continues = false
             defer {
                 if isCurrentAccountSession(session), inbox.generation == generation {
                     inbox.isLoading = false
+                    inbox.refreshJournal = nil
                     inbox.loadTask = nil
-                    if continuesAfterEmptyGroup { loadMoreInbox() }
+                    if continues { loadMoreInbox() } else { inbox.isRefreshing = false }
                 }
             }
             do {
-                if tab == .mentions {
+                if revalidatesMentions {
+                    try await revalidateInboxMentions(query: query, session: session, generation: generation)
+                } else if tab == .mentions {
                     try await loadInboxMentionPage(query: query, before: before, session: session, generation: generation)
                 } else if let group {
                     try await loadInboxGroup(group, session: session, generation: generation)
@@ -105,8 +154,9 @@ extension AppModel {
                 inbox.errorMessage = nil
                 await publishPreparedInbox(session: session, generation: generation)
                 guard !Task.isCancelled, isCurrentAccountSession(session), inbox.generation == generation else { return }
-                continuesAfterEmptyGroup = dismissEmptyInboxGroups()
-                    || (tab == .mentions && inbox.visibleMentions.isEmpty && inbox.hasMore)
+                continues = dismissEmptyInboxGroups()
+                    || group?.needsRevalidation == true && inbox.groups.contains { $0.needsRevalidation && !$0.isCollapsed }
+                    || (tab == .mentions && inbox.visibleMentions.isEmpty && inbox.hasMoreMentions)
             } catch is CancellationError {
             } catch {
                 guard isCurrentAccountSession(session), inbox.generation == generation else { return }
@@ -205,42 +255,69 @@ extension AppModel {
     }
 
     func toggleInboxGroup(_ channelID: ChannelID) {
-        guard let index = inbox.groups.firstIndex(where: { $0.id == channelID }), !inbox.isSavingSettings else { return }
+        guard let index = inbox.groups.firstIndex(where: { $0.id == channelID }) else { return }
         if inbox.groups[index].isAgeRestricted, let guildID = inbox.groups[index].guildID {
             requestInboxAgeAgreement(guildID: guildID) { [weak self] in self?.refreshInbox() }
             return
         }
         inbox.groups[index].isCollapsed.toggle()
         let group = inbox.groups[index]
+        inbox.pendingCollapse[group.id] = InboxCollapseIntent(
+            isCollapsed: group.isCollapsed, guildID: group.guildID, isEvents: group.isEvents
+        )
         publishInbox()
-        inbox.hasMore = inbox.groups.contains { !$0.isLoaded && !$0.isCollapsed }
         loadMoreInbox()
-        saveInboxSettings {
-            try await $0.updateInboxCollapsed(group.isCollapsed,
-                                             channelID: group.isEvents ? ChannelID(rawValue: 1_539_033_557_786_173_450) : channelID,
-                                             guildID: group.guildID)
+        scheduleInboxSettingsSync()
+    }
+
+    /// Coalesces rapid tab and collapse changes into the minimum set of saves.
+    private func scheduleInboxSettingsSync() {
+        inbox.settingsSyncTask?.cancel()
+        let session = accountSession()
+        inbox.settingsSyncTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard let self, !Task.isCancelled, isCurrentAccountSession(session) else { return }
+            inbox.settingsSyncTask = nil
+            flushInboxSettings(session: session)
         }
     }
 
-    private func saveInboxSettings(_ save: @escaping @Sendable (any ChatProvider) async throws -> Void) {
-        let session = accountSession()
+    /// Saves run one at a time; each Discord patch builds on the previous response.
+    private func flushInboxSettings(session: AppModelAccountSession) {
         let previousTask = inbox.settingsTask
-        inbox.isSavingSettings = true
-        let saveID = UUID()
-        inbox.settingsSaveID = saveID
         inbox.settingsTask = Task { [weak self] in
             await previousTask?.value
             guard let self, !Task.isCancelled, isCurrentAccountSession(session) else { return }
-            do {
-                try await save(session.provider)
-            } catch {
-                if isCurrentAccountSession(session) {
+            if let tab = inbox.pendingTab {
+                if tab != inbox.settings.tab {
+                    // A failed tab save only affects the next launch; keep the local choice.
+                    try? await session.provider.updateInboxTab(tab)
+                    guard isCurrentAccountSession(session) else { return }
+                }
+                if inbox.pendingTab == tab { inbox.pendingTab = nil }
+            }
+            for (id, intent) in inbox.pendingCollapse {
+                let saved = intent.isEvents
+                    ? intent.guildID.map { inbox.settings.collapsedEventGuildIDs.contains($0) } == true
+                    : inbox.settings.collapsedChannelIDs.contains(id)
+                var failure: (any Error)?
+                if saved != intent.isCollapsed {
+                    do {
+                        try await session.provider.updateInboxCollapsed(
+                            intent.isCollapsed,
+                            channelID: intent.isEvents ? ChannelID(rawValue: 1_539_033_557_786_173_450) : id,
+                            guildID: intent.guildID
+                        )
+                    } catch { failure = error }
+                    guard isCurrentAccountSession(session) else { return }
+                }
+                guard inbox.pendingCollapse[id] == intent else { continue }
+                inbox.pendingCollapse[id] = nil
+                if let failure {
+                    inbox.errorMessage = failure.localizedDescription
                     applyInboxSettings(inbox.settings)
-                    inbox.errorMessage = error.localizedDescription
                 }
             }
-            guard isCurrentAccountSession(session), inbox.settingsSaveID == saveID else { return }
-            inbox.isSavingSettings = false
         }
     }
 
@@ -263,26 +340,25 @@ extension AppModel {
     }
 
     func removeInboxMessage(_ id: MessageID, mentionsOnly: Bool = true) {
-        guard inbox.isPresented || inbox.loadTask != nil || !inbox.mentions.isEmpty else { return }
+        guard inbox.isPresented || inbox.loadTask != nil || inbox.retainedMessages.contains(where: { $0.id == id }) else { return }
         inbox.removedIDs.insert(id)
-        inbox.replacements[id] = nil
-        inbox.mentions.removeAll { $0.id == id }
-        if !mentionsOnly {
+        if mentionsOnly {
+            inbox.mentions.removeAll { $0.id == id }
+        } else {
             inbox.deletedIDs.insert(id)
-            for index in inbox.groups.indices { inbox.groups[index].messages.removeAll { $0.id == id } }
+            inbox.replaceRetainedMessage(id, with: nil)
         }
         publishInbox()
         if !mentionsOnly { dismissEmptyInboxGroups() }
     }
 
     func reconcileInboxMessage(_ message: Message, isNew: Bool = false) {
+        var changed = inbox.replaceRetainedMessage(message.id, with: message)
         guard inbox.isPresented else { return }
-        let retained = inbox.mentions.contains { $0.id == message.id }
-            || inbox.groups.contains { $0.messages.contains { $0.id == message.id } }
-        let awaitingPage = inbox.isLoading && (inbox.tab == .mentions
-            || inbox.groups.contains { $0.channelID == message.channelID && !$0.isLoaded })
-        if retained || awaitingPage { inbox.replacements[message.id] = message }
-        var changed = replaceInboxMessage(message)
+        if inbox.refreshJournal != nil {
+            let confirmed = pollVoteConfirmedSnapshot(reactionConfirmedSnapshot(message))
+            inbox.refreshJournal?.record(.upsert(confirmed), messageID: message.id)
+        }
         if isNew, !inbox.mentions.contains(where: { $0.id == message.id }), acceptsLiveInboxMention(message) {
             inbox.mentions.append(message)
             inbox.mentions.sort { $0.id > $1.id }
@@ -299,22 +375,6 @@ extension AppModel {
             && (inbox.query.guildID == nil || inbox.query.guildID == (message.guildID ?? readState.entries[message.channelID]?.guildID))
     }
 
-    private func replaceInboxMessage(_ message: Message) -> Bool {
-        var changed = false
-        if let index = inbox.mentions.firstIndex(where: { $0.id == message.id }), inbox.mentions[index] != message {
-            inbox.mentions[index] = message
-            changed = true
-        }
-        for groupIndex in inbox.groups.indices {
-            if let index = inbox.groups[groupIndex].messages.firstIndex(where: { $0.id == message.id }),
-               inbox.groups[groupIndex].messages[index] != message {
-                inbox.groups[groupIndex].messages[index] = message
-                changed = true
-            }
-        }
-        return changed
-    }
-
     func reconcileInboxEligibility() {
         guard inbox.isPresented else { return }
         let eligible = Set(makeInboxUnreadGroups().map(\.id))
@@ -323,7 +383,6 @@ extension AppModel {
             readState.entries[$0.channelID]?.isAccessible == false
                 || snapshot?.blockedOrIgnoredUserIDs.contains($0.author.id) == true
         }
-        inbox.hasMore = inbox.tab == .mentions ? inbox.hasMore : inbox.groups.contains { !$0.isLoaded && !$0.isCollapsed }
         publishInbox()
     }
 
@@ -422,23 +481,21 @@ struct InboxUnreadCandidate {
 extension AppModel {
     func applyInboxSettings(_ settings: InboxSettings) {
         inbox.settings = settings
-        if inbox.tab != settings.tab {
-            inbox.tab = settings.tab
-            if inbox.isPresented {
-                refreshInbox()
-                return
-            }
-        }
+        // An open Inbox keeps the tab the user is looking at; a delayed echo of
+        // an earlier save must never switch it back.
+        if !inbox.isPresented, inbox.pendingTab == nil { inbox.tab = settings.tab }
+        var changed = false
         for index in inbox.groups.indices {
             let group = inbox.groups[index]
-            inbox.groups[index].isCollapsed = group.isEvents
+            let collapsed = inbox.pendingCollapse[group.id]?.isCollapsed ?? (group.isEvents
                 ? group.guildID.map { settings.collapsedEventGuildIDs.contains($0) } == true
-                : settings.collapsedChannelIDs.contains(group.id)
+                : settings.collapsedChannelIDs.contains(group.id))
+            guard collapsed != group.isCollapsed else { continue }
+            inbox.groups[index].isCollapsed = collapsed
+            changed = true
         }
+        guard changed, inbox.isPresented else { return }
         publishInbox()
-        if inbox.tab == .unread {
-            inbox.hasMore = inbox.groups.contains { !$0.isLoaded && !$0.isCollapsed }
-            loadMoreInbox()
-        }
+        loadMoreInbox()
     }
 }

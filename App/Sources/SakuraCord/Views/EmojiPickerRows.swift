@@ -209,8 +209,7 @@ struct EmojiDocumentSidebar: View {
                         }
                     }
                 }
-                .onAppear { nativeCategoriesAreVisible = true }
-                .onDisappear { nativeCategoriesAreVisible = false }
+                .onScrollVisibilityChange(threshold: 0.01) { nativeCategoriesAreVisible = $0 }
             }
 
             if showsNativeJumpButton {

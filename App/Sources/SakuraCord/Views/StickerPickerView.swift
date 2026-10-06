@@ -342,6 +342,7 @@ private final class StickerPickerInteractionModel {
 struct StickerPickerView: View {
     let model: AppModel
     var destination: MessageComposerDestination = .channel
+    var initialQuery = ""
     let dismiss: () -> Void
     @State private var document = StickerPickerDocumentStore()
     @State private var interaction = StickerPickerInteractionModel()
@@ -382,6 +383,7 @@ struct StickerPickerView: View {
                 handleKeyPress(press, proxy: proxy)
             }
             .task {
+                document.query = initialQuery
                 document.synchronize(with: model)
                 interaction.synchronize(with: document.selectableCells)
                 searchIsFocused = true

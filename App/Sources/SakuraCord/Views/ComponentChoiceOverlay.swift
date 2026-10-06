@@ -109,15 +109,20 @@ final class ComponentChoiceOverlayController {
         selection = value
     }
 
-    func submitSelection(_ value: [String]) {
+    func completeSelection(_ value: [String], reason: SelectionFieldCompletion) {
         guard !closed else { return }
         selection = value
+        switch reason {
+        case .dismissed: close(commit: true); return
+        case .cancelled: close(); return
+        case .selected: break
+        }
         guard selectionIsValid else {
             NSSound.beep()
             return
         }
         submitted = true
-        if value != initialSelection { submit(value) }
+        submit(value)
         close(commit: false)
     }
 

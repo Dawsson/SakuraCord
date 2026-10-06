@@ -219,3 +219,121 @@ func autocompletePartialValueIgnoresFinalMinimumLength() throws {
     #expect(leaves.first?["value"] as? String == "a")
     #expect(leaves.first?["focused"] as? Bool == true)
 }
+
+@Test("execution carries the definition the official client displayed")
+func executionDefinitionNormalizationContract() throws {
+    let application = ApplicationCommandApplication(id: "100", name: "Utility")
+    let chat = ApplicationCommand(
+        id: "200", rootCommandID: "200", applicationID: "100", version: "201",
+        name: "pick", application: application,
+        options: [ApplicationCommandOption(id: "200/kind", name: "kind", type: .string, isRequired: true)],
+        rootCommandJSON: Data(#"""
+        {"id":"200","name":"pick","description":"Pick","name_localized":"choisir","options":[
+          {"type":3,"name":"kind","description":"Kind","choices":[{"name":"A","value":"a"}]}]}
+        """#.utf8)
+    )
+    let chatPayload = try ApplicationCommandPayloadBuilder.execution(ApplicationCommandInvocation(
+        command: chat, channelID: ChannelID("400")!, guildID: nil,
+        values: [.init(optionID: "200/kind", name: "kind", type: .string, argument: .string("a"))]
+    ))
+    let definition = try #require(chatPayload.data["application_command"]?.objectValue)
+    // An index-provided localization is kept; missing ones repeat the shown text.
+    #expect(definition["name_localized"] == .string("choisir"))
+    #expect(definition["description_localized"] == .string("Pick"))
+    let option = try #require(definition["options"]?.arrayValue?.first?.objectValue)
+    #expect(option["name_localized"] == .string("kind"))
+    #expect(option["description_localized"] == .string("Kind"))
+    let choice = try #require(option["choices"]?.arrayValue?.first?.objectValue)
+    #expect(choice["name_localized"] == .string("A"))
+    #expect(choice["description_localized"] == nil)
+
+    let context = ApplicationCommand(
+        id: "300", rootCommandID: "300", applicationID: "100", version: "301", type: .message,
+        name: "Inspect", application: application,
+        rootCommandJSON: Data(#"{"id":"300","type":3,"name":"Inspect"}"#.utf8)
+    )
+    let contextPayload = try ApplicationCommandPayloadBuilder.execution(ApplicationCommandInvocation(
+        command: context, channelID: ChannelID("400")!, guildID: nil, values: [], targetID: "500"
+    ))
+    #expect(contextPayload.data["target_id"] == .string("500"))
+    #expect(contextPayload.data["type"] == .number(3))
+    let contextDefinition = try #require(contextPayload.data["application_command"]?.objectValue)
+    #expect(contextDefinition["description"] == .string(""))
+    #expect(contextDefinition["options"] == .array([]))
+    #expect(contextDefinition["name_localized"] == .string("Inspect"))
+    #expect(contextDefinition["description_localized"] == nil)
+}
+
+@Test("modal submissions keep wrappers and distinguish untouched from cleared")
+func modalSubmissionPlanContract() throws {
+    let application = ApplicationCommandApplication(id: "100", name: "Utility")
+    let text = { (id: String) in
+        ModalControl(id: id, customID: id, kind: .textInput(
+            style: .short, placeholder: nil, minLength: nil, maxLength: nil, initialValue: nil
+        ), isRequired: false)
+    }
+    let select = ModalControl(id: "s", customID: "strings", kind: .select(
+        kind: .string, placeholder: nil, options: [], minValues: 0, maxValues: 1,
+        channelTypes: [], defaultValues: []
+    ), isRequired: false)
+    let files = ModalControl(id: "f", customID: "files", kind: .fileUpload(
+        minValues: 0, maxValues: 2, fileTypes: []
+    ), isRequired: false)
+    let modal = InteractionModal(
+        interactionID: "777", openingNonce: "1", application: application,
+        channelID: ChannelID("400")!, guildID: nil, customID: "form", title: "Form",
+        nodes: [
+            .textDisplay(id: "0", content: "Read me"),
+            .actionRow(id: "1", children: [.control(text("legacy"))]),
+            .label(id: "2", label: "Untouched", description: nil, child: .control(text("untouched"))),
+            .label(id: "3", label: "Cleared", description: nil, child: .control(text("cleared"))),
+            .label(id: "4", label: "Select", description: nil, child: .control(select)),
+            .label(id: "5", label: "Files", description: nil, child: .control(files))
+        ]
+    )
+    let urls = [URL(fileURLWithPath: "/a.txt"), URL(fileURLWithPath: "/b.txt")]
+    let plan = ModalSubmissionPayloadBuilder.plan(ModalSubmission(modal: modal, values: [
+        "legacy": .text("kept"),
+        "untouched": .text(nil),
+        "cleared": .text(""),
+        "strings": .values(nil),
+        "files": .files(urls)
+    ]))
+
+    let encoded = try JSONEncoder().encode(JSONValue.array(plan.components))
+    let json = try #require(String(data: encoded, encoding: .utf8))
+    let expected = try JSONEncoder().encode(JSONValue.array([
+        .object(["type": .number(10)]),
+        .object(["type": .number(1), "components": .array([
+            .object(["type": .number(4), "custom_id": .string("legacy"), "value": .string("kept")])
+        ])]),
+        .object(["type": .number(18), "component": .object([
+            "type": .number(4), "custom_id": .string("untouched"), "value": .null
+        ])]),
+        .object(["type": .number(18), "component": .object([
+            "type": .number(4), "custom_id": .string("cleared"), "value": .string("")
+        ])]),
+        .object(["type": .number(18), "component": .object([
+            "type": .number(3), "custom_id": .string("strings"), "values": .null
+        ])]),
+        .object(["type": .number(18), "component": .object([
+            "type": .number(19), "custom_id": .string("files"), "values": .array([.number(0), .number(1)])
+        ])])
+    ]))
+    #expect(
+        try JSONSerialization.jsonObject(with: encoded) as? NSArray
+            == JSONSerialization.jsonObject(with: expected) as? NSArray,
+        "\(json)"
+    )
+    #expect(plan.fileURLs == urls)
+}
+
+private extension JSONValue {
+    var objectValue: [String: JSONValue]? {
+        if case let .object(value) = self { value } else { nil }
+    }
+
+    var arrayValue: [JSONValue]? {
+        if case let .array(value) = self { value } else { nil }
+    }
+}

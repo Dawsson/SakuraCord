@@ -196,7 +196,7 @@ final class NativeMemberListCanvasView: NSView, WindowModalInputParticipant {
     var loadedItemIndexes: [Int] = []
     var selectedMemberID: UserID?
     var openProfile: ((ProfilePresentationState) -> Void)?
-    var sendProfileMessage: ((UserID, String) async -> Bool)?
+    var sendProfileMessage: ((UserID, String, String) async -> Bool)?
     var profilePresentation: ProfilePresentationState?
     var isProfilePresented = false
     var dismissProfile: () -> Void = {}

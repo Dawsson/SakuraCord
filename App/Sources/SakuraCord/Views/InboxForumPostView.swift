@@ -46,13 +46,9 @@ struct InboxForumPostView: View {
 extension NativeTimelineCanvasView {
     func reconcileInboxForumPosts() {
         var desired: [ChannelID: (ForumPost, CGRect)] = [:]
-        if let first = rowIndex(at: max(0, visibleRect.minY)) {
-            var index = first
-            while items.indices.contains(index), displayedRowOrigin(at: index) < visibleRect.maxY {
-                if case let .inboxForumPost(post) = items[index] {
-                    desired[post.id] = (post, CGRect(x: 0, y: displayedRowOrigin(at: index), width: bounds.width, height: 88))
-                }
-                index += 1
+        forEachDisplayedRow(in: visibleRect) { index in
+            if case let .inboxForumPost(post) = items[index] {
+                desired[post.id] = (post, CGRect(x: 0, y: displayedRowOrigin(at: index), width: bounds.width, height: 88))
             }
         }
         for id in Array(inboxForumPostHosts.keys) where desired[id] == nil {

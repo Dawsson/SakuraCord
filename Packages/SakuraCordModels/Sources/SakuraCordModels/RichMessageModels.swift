@@ -23,6 +23,9 @@ public struct MessageFlags: OptionSet, Codable, Hashable, Sendable {
     public static let forwarded = Self(rawValue: 1 << 14)
     public static let isComponentsV2 = Self(rawValue: 1 << 15)
     public static let isGuildOfficial = Self(rawValue: 1 << 19)
+    /// Never set by Discord. Marks the private row SakuraCord shows when an
+    /// application fails to answer an interaction.
+    public static let localInteractionFailure = Self(rawValue: 1 << 63)
 
     /// Discord clears this exact whitelist before requiring that no flag bits
     /// remain. Despite appearances, these flags are permitted on a source.
@@ -652,97 +655,6 @@ public struct GIFPickerLanding: Codable, Hashable, Sendable {
         self.categories = categories
         self.trendingPreviewURL = trendingPreviewURL
     }
-}
-
-public enum ComponentInteractionKind: String, Codable, Hashable, Sendable {
-    case button, stringSelect, userSelect, roleSelect, mentionableSelect, channelSelect
-}
-
-public struct ComponentInteractionSubmission: Codable, Hashable, Sendable {
-    public var messageID: MessageID
-    public var channelID: ChannelID
-    public var guildID: GuildID?
-    public var applicationID: ApplicationID?
-    public var customID: String
-    public var kind: ComponentInteractionKind
-    public var values: [String]
-    public var nonce: String
-    public init(
-        messageID: MessageID, channelID: ChannelID, guildID: GuildID? = nil,
-        applicationID: ApplicationID? = nil, customID: String, kind: ComponentInteractionKind,
-        values: [String] = [], nonce: String = ClientNonce.make()
-    ) {
-        self.messageID = messageID
-        self.channelID = channelID
-        self.guildID = guildID
-        self.applicationID = applicationID
-        self.customID = customID
-        self.kind = kind
-        self.values = values
-        self.nonce = nonce
-    }
-}
-
-public indirect enum ModalControl: Identifiable, Codable, Hashable, Sendable {
-    case label(id: String, label: String, description: String?, child: ModalControl)
-    case textInput(
-        id: String, customID: String, style: Int, label: String?, value: String?, placeholder: String?,
-        required: Bool, minLength: Int?, maxLength: Int?
-    )
-    case select(
-        id: String, customID: String, kind: ComponentSelectKind, options: [ComponentSelectOption],
-        required: Bool, minValues: Int, maxValues: Int
-    )
-    case fileUpload(id: String, customID: String, required: Bool, minValues: Int, maxValues: Int)
-    case radioGroup(id: String, customID: String, options: [ComponentSelectOption], required: Bool)
-    case checkboxGroup(
-        id: String, customID: String, options: [ComponentSelectOption], minValues: Int, maxValues: Int
-    )
-    case checkbox(id: String, customID: String, label: String, value: Bool)
-    case unsupported(id: String, type: Int)
-
-    public var id: String {
-        switch self {
-        case let .label(id, _, _, _), let .textInput(id, _, _, _, _, _, _, _, _),
-             let .select(id, _, _, _, _, _, _), let .fileUpload(id, _, _, _, _),
-             let .radioGroup(id, _, _, _), let .checkboxGroup(id, _, _, _, _), let .checkbox(id, _, _, _),
-             let .unsupported(id, _):
-            id
-        }
-    }
-}
-
-public struct InteractionModal: Identifiable, Codable, Hashable, Sendable {
-    public var id: String {
-        customID
-    }
-
-    public var customID: String
-    public var title: String
-    public var controls: [ModalControl]
-    public init(customID: String, title: String, controls: [ModalControl]) {
-        self.customID = customID
-        self.title = title
-        self.controls = controls
-    }
-}
-
-public struct ModalSubmission: Codable, Hashable, Sendable {
-    public var customID: String
-    public var values: [String: [String]]
-    public var fileURLs: [String: [URL]]
-    public init(customID: String, values: [String: [String]], fileURLs: [String: [URL]] = [:]) {
-        self.customID = customID
-        self.values = values
-        self.fileURLs = fileURLs
-    }
-}
-
-public enum InteractionEvent: Equatable, Sendable {
-    case created(nonce: String, interactionID: String)
-    case succeeded(nonce: String)
-    case failed(nonce: String, message: String)
-    case presentModal(nonce: String, modal: InteractionModal)
 }
 
 public enum MessageSendProgress: Equatable, Sendable {

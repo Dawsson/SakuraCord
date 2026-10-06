@@ -438,7 +438,7 @@ extension AppModel {
     }
 
     func replaceSelectedMessages(
-        with newMessages: [Message],
+        with incomingMessages: [Message],
         preparedRows: [MessageRowPresentation]? = nil
     ) {
         let commit = AppPerformanceSignposts.signposter.beginInterval(
@@ -450,6 +450,8 @@ extension AppModel {
                 commit
             )
         }
+        let newMessages = pollVoteMutations.isEmpty
+            ? incomingMessages : incomingMessages.map(pollVotePresentationPreserving)
         seedSlowmodeHistory(newMessages)
         let oldMessages = messages
         messages = newMessages
@@ -728,6 +730,7 @@ extension AppModel {
             outgoingMediaPresentationPreserving(incoming)
         ))
         reconcileInboxMessage(message)
+        receiveGuideResourceEvent(.messageUpdated(message))
         if message.channelID == openThread?.id {
             reconcileThread(message)
         }

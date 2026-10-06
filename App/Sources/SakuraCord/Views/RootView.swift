@@ -17,6 +17,16 @@ struct RootView: View {
                     model: model,
                     toolbarSearchFieldMetrics: toolbarSearchFieldMetrics
                 )
+                .windowModal(
+                    item: Binding(
+                        get: { model.issueReports.presentation },
+                        set: { if $0 == nil { model.issueReports.dismiss() } }
+                    ),
+                    cornerRadius: 32,
+                    cornerStyle: .circular
+                ) { _ in
+                    IssueReportView(model: model)
+                }
             case .signedOut:
                 if model.launchMode == .normal || model.includesOfflineSignIn {
                     if model.savedAccounts.isEmpty {
@@ -811,7 +821,7 @@ private struct ChatRootView: View {
             && model.guildWorkspacePage == nil
             && !presentsForumComposer
             && !showAccountSwitcher
-            && model.presentedInteractionModal == nil
+            && model.interactionModalForm == nil
             && (model.isComposerDropEligible(.channel)
                 || model.isComposerDropEligible(.thread))
     }
@@ -964,7 +974,7 @@ private struct ChatRootView: View {
         if model.hasThreadPane {
             return SupplementaryToolbarPresentation(
                 title: model.openThread?.name ?? "New Thread",
-                systemImage: model.selectedChannel?.kind == .forum
+                systemImage: model.openThreadParentChannel?.kind == .forum
                     ? "bubble.left.and.bubble.right.fill" : SakuraCordSystemSymbol.thread
             )
         }

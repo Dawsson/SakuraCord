@@ -98,6 +98,7 @@ extension AppModel {
         if onboarding.entries[guildID] == nil { onboarding.entries[guildID] = .init() }
         onboarding.presentedGuildID = guildID
         onboarding.previewChannelID = nil
+        suspendSelectedConversationPresentation()
         if hasCustomizationQuestions(in: guildID) || requiresOnboarding(in: guildID) { refreshOnboarding(in: guildID) }
     }
 

@@ -31,11 +31,17 @@ final class PopoverEscapeKeyRegistration {
         if window === popoverWindow { return true }
         // Escape can remain addressed to the workspace/settings window even
         // when several nested popovers are open above it.
-        var ancestor = presentingWindow
+        // A same-window overlay inherits its containing popover's presenter.
+        // Its registration must not hide that relationship from nested controls.
+        var ancestor = presentingWindow ?? registrations.last {
+            $0.popoverWindow === popoverWindow && $0.presentingWindow != nil
+        }?.presentingWindow
         var visited: Set<ObjectIdentifier> = []
         while let current = ancestor, visited.insert(ObjectIdentifier(current)).inserted {
             if current === window { return true }
-            ancestor = registrations.last { $0.popoverWindow === current }?.presentingWindow
+            ancestor = registrations.last {
+                $0.popoverWindow === current && $0.presentingWindow != nil
+            }?.presentingWindow
         }
         return false
     }

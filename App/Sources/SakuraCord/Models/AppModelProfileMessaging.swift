@@ -3,7 +3,7 @@ import Foundation
 import SakuraCordModels
 
 extension AppModel {
-    func sendProfileMessage(to userID: UserID, content: String) async -> Bool {
+    func sendProfileMessage(to userID: UserID, content: String, nonce: String = ClientNonce.make()) async -> Bool {
         guard userID != currentUser?.id,
               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return false }
@@ -22,13 +22,22 @@ extension AppModel {
                 snapshot?.channels.append(channel)
                 forwardSearchSourceRevision &+= 1
             }
+            if outgoingState(nonce: nonce, channelID: channel.id) == .confirmed { return true }
+            if let outgoing = composer.outbox.draftsByNonce[nonce] {
+                guard outgoing.channelID == channel.id, outgoing.content == content,
+                      outgoingState(nonce: nonce, channelID: channel.id) == .failed
+                else { return false }
+                updateOutgoingState(.sending, nonce: nonce, channelID: channel.id)
+                return await performOutgoingSend(outgoing, isRetry: true)
+            }
             return await sendChannelMessage(
                 channelID: channel.id,
                 content: content,
                 replyTo: nil,
                 replyPreview: nil,
                 attachments: [],
-                clearsComposer: false
+                clearsComposer: false,
+                nonce: nonce
             )
         } catch {
             guard isCurrentAccountSession(session) else { return false }

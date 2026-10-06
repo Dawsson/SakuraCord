@@ -46,6 +46,40 @@ enum NativeTimelineTextPresentation {
         )
     }
 
+    /// Discord shows an unanswered interaction as red text behind an alert glyph.
+    static func interactionFailure(_ value: Value) -> Value {
+        guard let attributedContent = value.attributedContent, attributedContent.length > 0 else { return value }
+        let resolved = NSMutableAttributedString(attributedString: attributedContent)
+        let attributes = resolved.attributes(at: 0, effectiveRange: nil)
+        resolved.insert(NSAttributedString(string: "⚠\u{FE0E} ", attributes: attributes), at: 0)
+        resolved.addAttribute(.foregroundColor, value: NSColor.systemRed, range: NSRange(location: 0, length: resolved.length))
+        return Value(
+            attributedContent: resolved,
+            framesetter: CTFramesetterCreateWithAttributedString(resolved),
+            linkedImages: value.linkedImages
+        )
+    }
+
+    /// Discord replaces a pending interaction's body with muted status text
+    /// whose first line leaves room for the loading dots.
+    static func interactionLoading(_ status: String) -> Value {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 1
+        paragraph.firstLineHeadIndent = interactionLoadingTextIndent
+        let resolved = NSAttributedString(string: status, attributes: [
+            .font: NSFont.systemFont(ofSize: InterfaceTypographyMetrics.messageTextSize),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: paragraph,
+        ])
+        return Value(
+            attributedContent: resolved,
+            framesetter: CTFramesetterCreateWithAttributedString(resolved),
+            linkedImages: []
+        )
+    }
+
+    static let interactionLoadingTextIndent = InteractionLoadingDots.size.width + 4
+
     static var empty: Value {
         Value(
             attributedContent: nil,
@@ -1320,6 +1354,217 @@ enum NativeTimelineEmbedLayout {
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         return attachments.first { $0.filename == filename }
             .map { $0.proxyURL ?? $0.url }
+    }
+
+}
+
+nonisolated enum NativeTimelineMarkdownChromeMetrics {
+    static let codeBlockInset: CGFloat = 8
+    static let codeBlockParagraphBottomSpacing: CGFloat = 4
+    // The painter gives CoreText one point of extra layout headroom and its
+    // selection-derived block rect has fractional vertical bounds. Preserve
+    // the established three-point message-highlight inset after that painted
+    // geometry instead of merely making the block fit the row.
+    static let codeBlockTerminalPaintAndHighlightInset: CGFloat = 5.5
+
+    static func trailingVisualOverflow(
+        in value: NSAttributedString
+    ) -> CGFloat {
+        guard value.length > 0 else { return 0 }
+        let source = value.string as NSString
+        var index = value.length - 1
+        while index >= 0 {
+            let scalar = source.character(at: index)
+            if let unicodeScalar = UnicodeScalar(scalar),
+               CharacterSet.whitespacesAndNewlines
+                .contains(unicodeScalar)
+            {
+                index -= 1
+                continue
+            }
+            break
+        }
+        guard index >= 0,
+              value.attribute(
+                  .discordMarkdownBlock,
+                  at: index,
+                  effectiveRange: nil
+              ) as? String == "code"
+        else { return 0 }
+        return max(
+            0,
+            codeBlockInset
+                - codeBlockParagraphBottomSpacing
+                + codeBlockTerminalPaintAndHighlightInset
+        )
+    }
+}
+
+enum NativeTimelineTimestamp {
+    static func headerText(
+        for date: Date,
+        settings: InterfaceSettingsSnapshot = .defaults
+    ) -> String {
+        InterfaceTimestampFormatter.messageText(
+            for: date,
+            format: settings.timestampFormat,
+            includesSeconds: settings.includesTimestampSeconds
+        )
+    }
+
+    static func text(
+        for date: Date,
+        settings: InterfaceSettingsSnapshot = .defaults,
+        includesSeconds: Bool? = nil
+    ) -> String {
+        InterfaceTimestampFormatter.text(
+            for: date,
+            format: settings.timestampFormat,
+            includesSeconds: includesSeconds
+                ?? settings.includesTimestampSeconds
+        )
+    }
+}
+
+extension NSAttributedString.Key {
+    nonisolated static let nativeTimelineMention = NSAttributedString.Key(
+        "dev.sakuracord.native-timeline-mention"
+    )
+}
+
+nonisolated final class NativeTimelineMentionBox: NSObject {
+    let presentation: MentionPresentation
+
+    init(_ presentation: MentionPresentation) {
+        self.presentation = presentation
+    }
+}
+
+nonisolated private final class NativeTimelineRunMetrics: @unchecked Sendable {
+    let ascent: CGFloat
+    let descent: CGFloat
+    let width: CGFloat
+
+    init(ascent: CGFloat, descent: CGFloat, width: CGFloat) {
+        self.ascent = ascent
+        self.descent = descent
+        self.width = width
+    }
+}
+
+nonisolated enum NativeTimelineRunDelegate {
+    static func make(
+        width: CGFloat,
+        height: CGFloat,
+        baselineOffset: CGFloat
+    ) -> CTRunDelegate {
+        let descent = max(0, -baselineOffset)
+        let metrics = NativeTimelineRunMetrics(
+            ascent: max(0, height - descent),
+            descent: descent,
+            width: width
+        )
+        let retained = Unmanaged.passRetained(metrics)
+        var callbacks = CTRunDelegateCallbacks(
+            version: kCTRunDelegateCurrentVersion,
+            dealloc: { pointer in
+                Unmanaged<NativeTimelineRunMetrics>
+                    .fromOpaque(pointer)
+                    .release()
+            },
+            getAscent: { pointer in
+                return Unmanaged<NativeTimelineRunMetrics>
+                    .fromOpaque(pointer)
+                    .takeUnretainedValue()
+                    .ascent
+            },
+            getDescent: { pointer in
+                return Unmanaged<NativeTimelineRunMetrics>
+                    .fromOpaque(pointer)
+                    .takeUnretainedValue()
+                    .descent
+            },
+            getWidth: { pointer in
+                return Unmanaged<NativeTimelineRunMetrics>
+                    .fromOpaque(pointer)
+                    .takeUnretainedValue()
+                    .width
+            }
+        )
+        guard let delegate = CTRunDelegateCreate(
+            &callbacks,
+            retained.toOpaque()
+        ) else {
+            retained.release()
+            preconditionFailure("Unable to create CoreText inline run delegate")
+        }
+        return delegate
+    }
+}
+
+extension NativeTimelineRowLayout {
+    static func measuredTextHeight(
+        _ framesetter: CTFramesetter,
+        value: NSAttributedString,
+        length: Int,
+        width: CGFloat
+    ) -> CGFloat {
+        let size = CTFramesetterSuggestFrameSizeWithConstraints(
+            framesetter,
+            CFRange(location: 0, length: length),
+            nil,
+            CGSize(width: max(1, width), height: .greatestFiniteMagnitude),
+            nil
+        )
+        // SwiftUI's one-line message text fits exactly in the established
+        // 18-point compact row. CoreText reports that same line just under
+        // 19 points because its suggested bounds include fractional font
+        // leading. Multiline suggestions retain one trailing point that the
+        // preserved NSTextView usedRect omitted.
+        if size.height < 20 {
+            return MessageRowLayoutMetrics.compactContentHeight
+        }
+        return ceil(size.height - 1.01)
+            + NativeTimelineMarkdownChromeMetrics
+                .trailingVisualOverflow(in: value)
+    }
+
+    /// A single layout pass shares its font resolution and timestamp gutter.
+    /// Recreate this snapshot for each pass so preference changes stay live.
+    struct Metrics {
+        let authorFont: NSFont
+        let timestampFont: NSFont
+        let editedFont: NSFont
+        let badgeFont: NSFont
+        let timestampGutterWidth: CGFloat
+
+        init(settings: InterfaceSettingsSnapshot) {
+            authorFont = .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .headline).pointSize, weight: .semibold)
+            timestampFont = .preferredFont(forTextStyle: .caption1)
+            editedFont = .preferredFont(forTextStyle: .caption2)
+            badgeFont = .systemFont(ofSize: editedFont.pointSize, weight: .bold)
+            timestampGutterWidth = NativeTimelineCompactTimestampMetrics.width(settings: settings)
+        }
+    }
+
+    private struct TextWidthKey: Hashable {
+        let text: String
+        let font: NSFont
+    }
+    private static var measuredTextWidths: [TextWidthKey: CGFloat] = [:]
+
+    static func measuredTextWidth(_ text: String, font: NSFont) -> CGFloat {
+        let key = TextWidthKey(text: text, font: font)
+        if let width = measuredTextWidths[key] { return width }
+        let attributed = NSAttributedString(
+            string: text,
+            attributes: [.font: font]
+        )
+        let line = CTLineCreateWithAttributedString(attributed)
+        let width = ceil(CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))
+        if measuredTextWidths.count >= 4_096 { measuredTextWidths.removeAll(keepingCapacity: true) }
+        measuredTextWidths[key] = width
+        return width
     }
 
 }

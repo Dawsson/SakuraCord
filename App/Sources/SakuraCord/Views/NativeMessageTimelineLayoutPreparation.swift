@@ -8,6 +8,7 @@ extension NativeMessageTimelineCoordinator {
         let presentationRevision: UInt64
         let fontRevision: UInt64
         let inviteRevision: UInt64
+        let timestampDay: Date
         let width: CGFloat
         var layouts: [NativeMessageTimelineItem.Identifier: CachedItemLayout] = [:]
         var isComplete = false
@@ -18,6 +19,7 @@ extension NativeMessageTimelineCoordinator {
             presentationRevision = parent.presentationRevision
             fontRevision = ProfileNameFontCache.revision
             inviteRevision = parent.model.serverInvites.revision
+            timestampDay = Calendar.autoupdatingCurrent.startOfDay(for: .now)
             self.width = width
         }
 
@@ -28,6 +30,7 @@ extension NativeMessageTimelineCoordinator {
                 && presentationRevision == parent.presentationRevision
                 && fontRevision == ProfileNameFontCache.revision
                 && inviteRevision == parent.model.serverInvites.revision
+                && timestampDay == Calendar.autoupdatingCurrent.startOfDay(for: .now)
                 && abs(self.width - width) < 0.5
         }
     }
@@ -39,7 +42,8 @@ extension NativeMessageTimelineCoordinator {
         scrollView: NSScrollView
     ) -> Bool {
         let width = max(220, scrollView.contentView.bounds.width.rounded())
-        guard newParent.model === parent.model,
+        guard timestampDay == Calendar.autoupdatingCurrent.startOfDay(for: .now),
+              newParent.model === parent.model,
               newParent.conversation == parent.conversation,
               newParent.scrollRequest == parent.scrollRequest,
               pendingLayoutWidth == nil,

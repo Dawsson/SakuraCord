@@ -2,6 +2,25 @@ import DiscordProtocol
 import SakuraCordModels
 
 extension AppModel {
+    // Guild pages retain sidebar selection while replacing its conversation.
+    func isConversationPresented(_ channelID: ChannelID) -> Bool {
+        guard onboardingEntryGuildID == nil else { return false }
+        if openThread?.id == channelID { return true }
+        guard selectedChannelID == channelID else { return false }
+        guard guildWorkspacePage != nil else { return true }
+        return !hasThreadPane && customizationPreviewChannel?.id == channelID
+    }
+
+    func suspendSelectedConversationPresentation() {
+        guard let selectedChannelID else { return }
+        _ = readState.updatePresentation(
+            channelID: selectedChannelID,
+            isPresented: false,
+            initialPositionEstablished: false,
+            hasReachedReadBoundary: false
+        )
+    }
+
     func reportTimelineLiveScrolling(
         _ isScrolling: Bool,
         conversationID: ChannelID
@@ -72,6 +91,7 @@ extension AppModel {
             preserveUnreadDividerIfNeeded(channelID: selectedChannelID)
             if let target = readState.updatePresentation(
                 channelID: selectedChannelID,
+                isPresented: isConversationPresented(selectedChannelID),
                 windowIsActive: isActive
             ) {
                 scheduleAcknowledgement(
@@ -84,6 +104,7 @@ extension AppModel {
             preserveUnreadDividerIfNeeded(channelID: threadID)
             if let target = readState.updatePresentation(
                 channelID: threadID,
+                isPresented: isConversationPresented(threadID),
                 windowIsActive: isActive
             ) {
                 scheduleAcknowledgement(channelID: threadID, messageID: target)
@@ -107,7 +128,7 @@ extension AppModel {
         channelID: ChannelID,
         hasReachedReadBoundary: Bool
     ) {
-        guard channelID == selectedChannelID || channelID == openThread?.id else { return }
+        guard isConversationPresented(channelID) else { return }
         preserveUnreadDividerIfNeeded(channelID: channelID)
         let previousBoundary =
             readState.presentations[channelID]?.hasReachedReadBoundary
@@ -134,7 +155,7 @@ extension AppModel {
         channelID: ChannelID,
         hasReachedReadBoundary: Bool
     ) {
-        guard channelID == selectedChannelID || channelID == openThread?.id else { return }
+        guard isConversationPresented(channelID) else { return }
         preserveUnreadDividerIfNeeded(channelID: channelID)
         let target = readState.updatePresentation(
             channelID: channelID,
@@ -155,7 +176,7 @@ extension AppModel {
     }
 
     func reportTimelineUserInteraction(channelID: ChannelID) {
-        guard channelID == selectedChannelID || channelID == openThread?.id else { return }
+        guard isConversationPresented(channelID) else { return }
         readState.unblockAutomaticAcknowledgement(channelID: channelID)
     }
 
@@ -170,7 +191,7 @@ extension AppModel {
         preserveUnreadDividerIfNeeded(channelID: channelID)
         if let target = readState.updatePresentation(
             channelID: channelID,
-            isPresented: true,
+            isPresented: isConversationPresented(channelID),
             initialHistoryLoaded: true
         ) {
             scheduleAcknowledgement(channelID: channelID, messageID: target)

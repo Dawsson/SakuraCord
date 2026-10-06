@@ -352,3 +352,72 @@ import Testing
     #expect(message.interactionMetadata?.user?.displayName == "Tester")
     #expect(message.interactionMetadata?.originalResponseMessageID == MessageID("700"))
 }
+
+@Test func `uploaded component media keeps its delivered URL alongside the attachment reference`() throws {
+    let data = Data(
+        #"""
+        {
+          "id":"700","channel_id":"200","type":23,"flags":32768,"content":"","attachments":[],
+          "author":{"id":"101","username":"greed","bot":true},
+          "components":[{"type":12,"id":1,"items":[{"media":{
+            "url":"https://cdn.discordapp.com/attachments/200/900/quote.png?ex=1",
+            "proxy_url":"https://media.discordapp.net/attachments/200/900/quote.png?ex=1",
+            "width":1200,"height":630,"content_type":"image/png","attachment_id":"900","flags":0
+          },"description":null,"spoiler":false}]}]
+        }
+        """#.utf8
+    )
+
+    let message = try RichMessageFixtureDecoder.decodeMessage(from: data)
+    guard case let .mediaGallery(_, items) = message.components.first, let media = items.first?.media else {
+        Issue.record("Expected a media gallery")
+        return
+    }
+    #expect(media.attachmentName == "900")
+    #expect(media.url?.host() == "cdn.discordapp.com")
+    #expect(media.proxyURL?.host() == "media.discordapp.net")
+}
+
+@Test func `webhook message identity survives decoding and sparse updates without indexing a user`() throws {
+    let data = Data(#"""
+    {"id":"100","channel_id":"200","webhook_id":"300",
+     "author":{"id":"300","username":"Test persona","discriminator":"0000","avatar":"custom_hash","bot":true},
+     "content":"Test","referenced_message":{"id":"99","webhook_id":"300",
+       "author":{"id":"300","username":"Other persona","discriminator":"0000","avatar":null,"bot":true},"content":"Earlier"}}
+    """#.utf8)
+    let dto = try JSONDecoder().decode(MessageDTO.self, from: data)
+    let message = try dto.domain()
+    #expect(message.webhookID == "300")
+    #expect(message.author.isWebhookIdentity)
+    #expect(message.author.avatarURL?.path == "/avatars/300/custom_hash.webp")
+    #expect(dto.searchIndexUsers.isEmpty)
+    #expect(message.replyPreview?.author.displayName == "Other persona")
+    #expect(message.replyPreview?.webhookID == "300")
+    // Legacy "0000" selects the first default artwork, like Discord's client.
+    #expect(message.replyPreview?.author.avatarURL?.lastPathComponent == "18e336a74a159cfd.png")
+    #expect(try JSONDecoder().decode(Message.self, from: JSONEncoder().encode(message)) == message)
+    var updated = message
+    let update = try JSONDecoder().decode(MessageUpdateDTO.self, from: Data(#"{"id":"100","channel_id":"200","content":"Edited"}"#.utf8))
+    update.apply(to: &updated)
+    #expect(updated.webhookID == message.webhookID && updated.author == message.author)
+    #expect(updated.content == "Edited")
+    // New avatar URLs are materialized asynchronously: CREATE has avatar:null,
+    // then UPDATE carries the complete message-scoped webhook author.
+    let avatarUpdate = try JSONDecoder().decode(MessageUpdateDTO.self, from: Data(#"""
+    {"id":"100","channel_id":"200","webhook_id":"300",
+     "author":{"id":"300","username":"New persona","discriminator":"0000","avatar":"ready_hash","bot":true}}
+    """#.utf8))
+    var coalesced = try #require(avatarUpdate.domain(guildID: nil))
+    coalesced.merge(try #require(update.domain(guildID: nil)))
+    coalesced.apply(to: &updated)
+    #expect(updated.author.displayName == "New persona")
+    #expect(updated.author.avatarURL?.path == "/avatars/300/ready_hash.webp")
+    #expect(updated.replyPreview == message.replyPreview)
+    #expect(coalesced.updatedUsers.isEmpty)
+    #expect(updated.content == "Edited")
+    var otherDTO = dto
+    otherDTO.id = "101"
+    var otherMessage = try otherDTO.domain()
+    coalesced.apply(to: &otherMessage)
+    #expect(otherMessage.author == message.author)
+}

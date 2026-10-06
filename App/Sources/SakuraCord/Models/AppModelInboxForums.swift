@@ -3,7 +3,7 @@ import SakuraCordModels
 
 extension AppModel {
     func loadInboxForum(_ group: InboxUnreadGroup, session: AppModelAccountSession, generation: UInt64) async throws {
-        var query = ForumPostQuery(sortOrder: .creationDate, limit: 100)
+        var query = ForumPostQuery(sortOrder: .creationDate, limit: 100, requiresFreshPage: true)
         var posts: [ChannelID: ForumPost] = [:]
         while true {
             let page = try await session.provider.forumPosts(in: group.channelID, query: query)
@@ -19,7 +19,7 @@ extension AppModel {
         guard let index = inbox.groups.firstIndex(where: { $0.id == group.id }) else { return }
         inbox.groups[index].forumPosts = visiblePosts
         inbox.groups[index].isLoaded = true
-        inbox.hasMore = inbox.groups.contains { !$0.isLoaded && !$0.isCollapsed }
+        inbox.groups[index].needsRevalidation = false
     }
 }
 

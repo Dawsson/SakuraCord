@@ -437,7 +437,10 @@ nonisolated struct MessageAuthorPresentation: Equatable {
         member: Member?,
         roles: [GuildRole]
     ) -> Self {
-        resolve(
+        if message.webhookID != nil, message.author.isWebhookIdentity {
+            return Self(user: message.author, roleColorHex: nil)
+        }
+        return resolve(
             user: message.author,
             guildMember: message.guildMember,
             member: member,
@@ -450,7 +453,10 @@ nonisolated struct MessageAuthorPresentation: Equatable {
         member: Member?,
         roles: [GuildRole]
     ) -> Self {
-        resolve(
+        if replyPreview.webhookID != nil, replyPreview.author.isWebhookIdentity {
+            return Self(user: replyPreview.author, roleColorHex: nil)
+        }
+        return resolve(
             user: replyPreview.author,
             guildMember: replyPreview.guildMember,
             member: member,

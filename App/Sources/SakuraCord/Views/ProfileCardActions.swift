@@ -28,8 +28,9 @@ struct ProfileAvatarExpansion: ViewModifier {
 
 struct ProfileQuickMessageView: View {
     let user: User
-    let send: (String) async -> Bool
+    let send: (String, String) async -> Bool
     @State private var draft = ""
+    @State private var nonce = ClientNonce.make()
     @State private var isSending = false
     @State private var result: String?
 
@@ -60,6 +61,7 @@ struct ProfileQuickMessageView: View {
             }
         }
         .onChange(of: draft) { _, value in
+            if !isSending { nonce = ClientNonce.make() }
             if !value.isEmpty { result = nil }
         }
     }
@@ -67,11 +69,15 @@ struct ProfileQuickMessageView: View {
     private func submit() {
         guard !isSending, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let content = draft
+        let submissionNonce = nonce
         isSending = true
         result = nil
         Task { @MainActor in
-            let sent = await send(content)
-            if sent { draft = "" }
+            let sent = await send(content, submissionNonce)
+            if sent {
+                draft = ""
+                nonce = ClientNonce.make()
+            }
             result = sent ? "Message sent" : "Couldn't send message. Try again."
             isSending = false
         }

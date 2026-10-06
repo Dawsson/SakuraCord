@@ -62,18 +62,21 @@ where Section.ID == String {
     let jump: (Section) -> Void
     @ViewBuilder let content: () -> Content
     @State private var isHovering = false
+    @State private var isVisible = false
 
     var body: some View {
         Button {
             jump(section)
         } label: {
-            content()
-                .frame(
-                    width: PickerSectionRailLayout.iconSize,
-                    height: PickerSectionRailLayout.iconSize,
-                    alignment: .center
-                )
-                .contentShape(ConcentricRectangle(cornerRadius: 9, style: .continuous))
+            Group {
+                if isVisible { content() } else { Color.clear }
+            }
+            .frame(
+                width: PickerSectionRailLayout.iconSize,
+                height: PickerSectionRailLayout.iconSize,
+                alignment: .center
+            )
+            .contentShape(ConcentricRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.plain)
         .focusable(false)
@@ -91,6 +94,7 @@ where Section.ID == String {
                     .fill(Color.primary.opacity(0.08))
             }
         }
+        .onScrollVisibilityChange(threshold: 0.01) { isVisible = $0 }
         .onModalHover { isHovering = $0 }
         .help(help)
         .accessibilityLabel(help)
@@ -108,11 +112,14 @@ struct PickerSectionRail<Content: View>: View {
     var body: some View {
         GeometryReader { _ in
             ScrollView {
-                LazyVStack(spacing: 2, content: content)
-                    .scrollTargetLayout()
-                    .padding(.vertical, 4)
+                // This short rail needs an exact intrinsic height: lazy estimates
+                // resize the document during top overscroll and cancel its bounce.
+                // Bookmark artwork is still mounted only while visible.
+                VStack(spacing: 2, content: content)
                     .frame(maxWidth: .infinity, alignment: .center)
             }
+            .contentMargins(.vertical, 4, for: .scrollContent)
+            .scrollBounceBehavior(.always, axes: .vertical)
             .scrollPosition(scrollPosition ?? $localPosition)
             .scrollIndicators(.never)
         }

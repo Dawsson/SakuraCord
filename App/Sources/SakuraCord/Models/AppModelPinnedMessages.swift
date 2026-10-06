@@ -103,11 +103,11 @@ extension AppModel {
     }
 
     func canManagePins(for message: Message) -> Bool {
-        return canManagePins(in: message.channelID)
+        !message.flags.contains(.ephemeral) && canManagePins(in: message.channelID)
     }
 
     func canDeleteMessage(_ message: Message) -> Bool {
-        guard message.outboxState == .confirmed else { return false }
+        guard message.outboxState == .confirmed, !message.flags.contains(.ephemeral) else { return false }
         if !message.type.hasGeneratedContent,
            message.author.id == snapshot?.currentUser.id
         {
@@ -144,8 +144,8 @@ extension AppModel {
         if let channel = rootMessageChannel(channelID) {
             return (channel, false)
         }
-        if openThread?.id == channelID, let selectedChannel {
-            return (selectedChannel, true)
+        if openThread?.id == channelID, let parent = openThreadParentChannel {
+            return (parent, true)
         }
         let parentID = snapshot?.threads.first(where: { $0.id == channelID })?.parentID
             ?? snapshot?.activeJoinedThreads.first(where: { $0.id == channelID })?.parentID
@@ -166,19 +166,6 @@ extension AppModel {
         case .forum, .unknown:
             false
         }
-    }
-
-    func effectiveMessagePermissions(in channel: Channel) -> UInt64? {
-        guard let guildID = channel.guildID,
-              let basis = conversationPermissionBasis(for: guildID)
-        else { return channel.guildID == nil ? .max : nil }
-        return ConversationPermissionResolver.effectivePermissions(
-            guild: basis.guild,
-            channel: channel,
-            resolvedBasePermissions: basis.resolvedBasePermissions,
-            overwritePrincipals: basis.overwritePrincipals,
-            hasCurrentRoleIdentity: basis.hasCurrentRoleIdentity
-        )
     }
 
     func presentPinnedMessages(channelID: ChannelID? = nil) {
@@ -228,7 +215,7 @@ extension AppModel {
 
     private func canReadPins(in channelID: ChannelID) -> Bool {
         if channelID == openThread?.id {
-            guard openThreadAccess.isReadable else { return false }
+            return openThreadAccess.isReadable
         } else if channelID != selectedChannelID {
             return false
         }
@@ -343,8 +330,8 @@ extension AppModel {
             previousItems,
             page.items
         )
-        let newItems = applyingPinIntents(
-            to: combined,
+        let newItems = reconciledPinnedItems(
+            combined,
             channelID: channelID,
             previousItems: previousItems
         )
@@ -366,8 +353,8 @@ extension AppModel {
             latestPreviousItems,
             page.items
         )
-        let latestItems = applyingPinIntents(
-            to: latestCombined,
+        let latestItems = reconciledPinnedItems(
+            latestCombined,
             channelID: channelID,
             previousItems: latestPreviousItems
         )
@@ -447,12 +434,17 @@ extension AppModel {
         }
     }
 
-    private func applyingPinIntents(
-        to items: [PinnedMessage],
+    private func reconciledPinnedItems(
+        _ items: [PinnedMessage],
         channelID: ChannelID,
         previousItems: [PinnedMessage]
     ) -> [PinnedMessage] {
         var result = items
+        if !pollVoteMutations.isEmpty {
+            for index in result.indices {
+                result[index].message = pollVotePresentationPreserving(result[index].message)
+            }
+        }
         for (messageID, intent) in pinnedMessages.mutationIntents
         where intent.channelID == channelID {
             if intent.desired {
@@ -474,7 +466,9 @@ extension AppModel {
         let isPinned = pinnedMessages.mutationIntents[source.id]?.desired ?? isPinned
         var message = source
         message.isPinned = isPinned
-        consumeMessageUpdated(message, preparedTextPlan: nil)
+        // This owner commits the pinned list in a batch. Publish its truth to
+        // other surfaces without reconciling every item back into that list.
+        consumeMessageUpdated(message, preparedTextPlan: nil, updatesPinnedMessages: false)
         guard var page = messageSearch.page else { return }
         var changed = false
         for resultIndex in page.results.indices {
@@ -609,6 +603,7 @@ extension AppModel {
     func reconcilePinnedMessage(_ message: Message) {
         guard let index = pinnedMessages.items.firstIndex(where: { $0.id == message.id })
         else { return }
+        guard !message.isPinned || pinnedMessages.items[index].message != message else { return }
         var items = pinnedMessages.items
         if message.isPinned {
             items[index].message = message

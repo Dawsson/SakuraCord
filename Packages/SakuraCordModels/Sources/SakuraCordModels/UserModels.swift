@@ -43,6 +43,10 @@ public struct DisplayNameStyle: Codable, Hashable, Sendable {
 public struct User: Identifiable, Codable, Hashable, Sendable {
     public let id: UserID
     public var username: String
+    /// Discord marks message-scoped webhook identities with discriminator 0000.
+    /// Interaction replies from real bot users retain their normal profiles.
+    public var isWebhookIdentity: Bool { isBot && discriminator == "0000" }
+
     public var discriminator: String
     public var displayName: String
     public var avatarURL: URL?

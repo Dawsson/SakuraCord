@@ -1,0 +1,73 @@
+name: ✨ Feature suggestion
+description: An idea for SakuraCord
+type: Feature
+labels:
+  - "status: new"
+body:
+  - type: markdown
+    attributes:
+      value: |-
+        Thanks for the idea! Every report also gets a post in our [Discord](https://discord.gg/hWNwFXkUTP) and appears on [sakuracord.app/tracker](https://sakuracord.app/tracker). Please [search existing reports](https://sakuracord.app/tracker) first — a 👍 on an existing issue helps more than a duplicate.
+
+        <!-- Generated from SakuraCordApp/Roadmap src/report/schema.ts. Edit there, then run npm run issue-forms. -->
+  - type: textarea
+    id: request
+    attributes:
+      label: What would you like?
+      description: Describe the feature or change
+      placeholder: Let me pick a different notification sound for each server…
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Why do you want it?
+      description: The problem it solves or how you'd use it
+    validations:
+      required: false
+  - type: dropdown
+    id: importance
+    attributes:
+      label: How important is it to you?
+      options:
+        - I can't switch to SakuraCord without it
+        - I'd use it every day
+        - Nice to have
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SakuraCord version
+      description: Only the latest nightly or regular release. Update and retest first.
+      placeholder: e.g. 0.1.6 Beta 3
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Optional. We'll pick one if you're unsure
+      options:
+        - Chat & Messages
+        - Communication
+        - Servers & Roles
+        - Personalization
+        - Plugins
+        - Platform
+    validations:
+      required: false
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Mockups or examples
+      description: Drag images or videos here.
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      placeholder: Logs, links, how often it happens, workarounds…
+    validations:
+      required: false

@@ -180,6 +180,10 @@ nonisolated enum MessageOutboxPresentation {
         }
     }
 
+    static func interactionMode(for message: Message) -> InteractionMode {
+        message.flags.contains(.ephemeral) ? .disabled : interactionMode(for: message.outboxState)
+    }
+
     static func interactionMode(for state: OutboxState) -> InteractionMode {
         switch state {
         case .queued, .uploading, .sending, .awaitingReconciliation:
@@ -191,8 +195,18 @@ nonisolated enum MessageOutboxPresentation {
         }
     }
 
-    static func textOpacity(for state: OutboxState) -> Double {
-        contentOpacity(for: state)
+    /// Pending-interaction status replaces dimming; it is already muted.
+    static func textOpacity(for message: Message) -> Double {
+        message.flags.contains(.loading) ? 1 : contentOpacity(for: message.outboxState)
+    }
+
+    /// Discord labels a pending interaction from its loading flag, not its
+    /// body: a local command row reports its own progress, and an app's
+    /// deferred response is the app "thinking".
+    static func interactionLoadingStatus(for message: Message, authorName: String) -> String? {
+        guard message.flags.contains(.loading) else { return nil }
+        if message.outboxState != .confirmed, !message.content.isEmpty { return message.content }
+        return "\(authorName) is thinking…"
     }
 
     static func mediaOpacity(for state: OutboxState) -> Double {
@@ -223,6 +237,8 @@ nonisolated enum MessageOutboxPresentation {
 }
 
 struct NativeTimelineEditingMessageContent: View {
+    @State private var isDismissHovered = false
+
     let model: AppModel
     let message: Message
     let save: (String) -> Void
@@ -294,9 +310,12 @@ struct NativeTimelineEditingMessageContent: View {
                         .accessibilityHidden(true)
                     Text("Only you can see this")
                     Text("•")
-                    Button("Dismiss message") {
+                    Button {
                         model.dismissEphemeralMessage(message)
+                    } label: {
+                        Text("Dismiss message").underline(isDismissHovered)
                     }
+                    .onModalHover { isDismissHovered = $0 }
                     .buttonStyle(.plain)
                     .foregroundStyle(SakuraCordAccentColor.color)
                 }

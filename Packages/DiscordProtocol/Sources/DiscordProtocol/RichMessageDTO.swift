@@ -228,12 +228,37 @@ final class MessageComponentDTO: Decodable {
             case contentType = "content_type"
             case attachmentID = "attachment_id"
         }
+
+        /// A request may reference `attachment://name`; a delivered message
+        /// resolves that to a CDN URL and keeps `attachment_id`, while the
+        /// attachment itself is absent from `attachments`. Keep both.
+        func domain(description: String?, isSpoiler: Bool) -> ComponentMedia {
+            let reference = url.flatMap { $0.hasPrefix("attachment://") ? String($0.dropFirst("attachment://".count)) : nil }
+            return ComponentMedia(
+                url: reference == nil ? url.flatMap(URL.init) : nil,
+                proxyURL: proxyURL.flatMap(URL.init), attachmentName: reference ?? attachmentID,
+                width: width, height: height, contentType: contentType,
+                placeholder: placeholder, placeholderVersion: placeholderVersion,
+                flags: flags, description: description, isSpoiler: isSpoiler
+            )
+        }
     }
 
     struct MediaItem: Decodable {
         var media: UnfurledMedia?
         var description: String?
         var spoiler: Bool?
+    }
+
+    struct DefaultValue: Decodable {
+        var id: StringOrIntegerDTO
+        var type: String
+
+        var domain: ComponentDefaultValue? {
+            ComponentDefaultValueKind(rawValue: type).map {
+                ComponentDefaultValue(id: id.value, kind: $0)
+            }
+        }
     }
 
     var type: Int
@@ -267,6 +292,8 @@ final class MessageComponentDTO: Decodable {
     var minimumLength: Int?
     var maximumLength: Int?
     var defaultValue: Bool?
+    var defaultValues: LossyList<DefaultValue>?
+    var fileTypes: [String]?
 
     enum CodingKeys: String, CodingKey {
         case type, id, style, label, emoji, url, disabled, placeholder, options, content, description,
@@ -281,6 +308,8 @@ final class MessageComponentDTO: Decodable {
         case minimumLength = "min_length"
         case maximumLength = "max_length"
         case defaultValue = "default"
+        case defaultValues = "default_values"
+        case fileTypes = "file_types"
     }
 
     func domain(path: String, usesPathIdentity: Bool = false) -> MessageComponent {
@@ -290,20 +319,8 @@ final class MessageComponentDTO: Decodable {
         let children = (components?.elements ?? []).enumerated().map {
             $0.element.domain(path: "\(path).\($0.offset)", usesPathIdentity: usesPathIdentity)
         }
-        let mediaValue: ComponentMedia = {
-            let source = type == 13 ? file : media
-            let raw = source?.url
-            let attachment =
-                raw?.hasPrefix("attachment://") == true
-                    ? String(raw!.dropFirst("attachment://".count)) : source?.attachmentID
-            return ComponentMedia(
-                url: attachment == nil ? raw.flatMap(URL.init) : nil,
-                proxyURL: source?.proxyURL.flatMap(URL.init), attachmentName: attachment,
-                width: source?.width, height: source?.height, contentType: source?.contentType,
-                placeholder: source?.placeholder, placeholderVersion: source?.placeholderVersion,
-                flags: source?.flags, description: description, isSpoiler: spoiler ?? false
-            )
-        }()
+        let mediaValue = (type == 13 ? file : media)?.domain(description: description, isSpoiler: spoiler ?? false)
+            ?? ComponentMedia(description: description, isSpoiler: spoiler ?? false)
         switch type {
         case 1: return .actionRow(id: stableID, children: children)
         case 2:
@@ -316,10 +333,15 @@ final class MessageComponentDTO: Decodable {
             guard let kind = ComponentSelectKind(rawValue: type), let customID else {
                 return .unsupported(id: stableID, type: type, label: label)
             }
+            // Entity selects have no options; their defaults arrive as
+            // `default_values` and are carried as preselected entity options.
+            let selectOptions = kind == .string
+                ? (options?.elements ?? []).map(\.domain)
+                : defaultEntityOptions
             return .select(
                 id: stableID, kind: kind, customID: customID, placeholder: placeholder,
                 minValues: minValues ?? 1, maxValues: maxValues ?? 1, disabled: disabled ?? false,
-                options: (options?.elements ?? []).map(\.domain), channelTypes: channelTypes ?? []
+                options: selectOptions, channelTypes: channelTypes ?? []
             )
         case 9:
             return .section(
@@ -330,20 +352,10 @@ final class MessageComponentDTO: Decodable {
         case 11: return .thumbnail(id: stableID, media: mediaValue)
         case 12:
             let values = (items?.elements ?? []).enumerated().map { index, item in
-                let raw = item.media?.url
-                let attachment =
-                    raw?.hasPrefix("attachment://") == true
-                        ? String(raw!.dropFirst("attachment://".count)) : item.media?.attachmentID
-                return ComponentGalleryItem(
+                ComponentGalleryItem(
                     id: "\(stableID).\(index)",
-                    media: ComponentMedia(
-                        url: attachment == nil ? raw.flatMap(URL.init) : nil,
-                        proxyURL: item.media?.proxyURL.flatMap(URL.init), attachmentName: attachment,
-                        width: item.media?.width, height: item.media?.height,
-                        contentType: item.media?.contentType, placeholder: item.media?.placeholder,
-                        placeholderVersion: item.media?.placeholderVersion, flags: item.media?.flags,
-                        description: item.description, isSpoiler: item.spoiler ?? false
-                    )
+                    media: item.media?.domain(description: item.description, isSpoiler: item.spoiler ?? false)
+                        ?? ComponentMedia(description: item.description, isSpoiler: item.spoiler ?? false)
                 )
             }
             return .mediaGallery(id: stableID, items: values)
@@ -357,61 +369,86 @@ final class MessageComponentDTO: Decodable {
         }
     }
 
-    func modalControl(path: String) -> ModalControl {
+    private var defaultEntityOptions: [ComponentSelectOption] {
+        (defaultValues?.elements ?? []).compactMap(\.domain).map { value in
+            let entityKind: ComponentSelectOptionEntityKind = switch value.kind {
+            case .user: .user
+            case .role: .role
+            case .channel: .channel
+            }
+            return ComponentSelectOption(
+                label: value.id, value: value.id, entityKind: entityKind, isDefault: true
+            )
+        }
+    }
+
+    /// Decodes one node of a returned modal. Discord omits `required` for
+    /// optional controls, so absence means optional rather than required.
+    func modalNode(path: String) -> ModalNode {
         let stableID = id.map(String.init) ?? path
         switch type {
         case 1:
-            return components?.elements.first?.modalControl(path: "\(path).0")
-                ?? .unsupported(id: stableID, type: type)
+            return .actionRow(
+                id: stableID,
+                children: (components?.elements ?? []).enumerated().map {
+                    $0.element.modalNode(path: "\(path).\($0.offset)")
+                }
+            )
         case 18:
             return .label(
-                id: stableID, label: label ?? "Field", description: description,
-                child: component?.modalControl(path: "\(path).component")
+                id: stableID, label: label ?? "", description: description,
+                child: component?.modalNode(path: "\(path).component")
                     ?? .unsupported(id: "\(stableID).component", type: -1)
             )
+        case 10:
+            return .textDisplay(id: stableID, content: content ?? "")
+        default:
+            return modalControl(id: stableID).map(ModalNode.control)
+                ?? .unsupported(id: stableID, type: type)
+        }
+    }
+
+    private func modalControl(id stableID: String) -> ModalControl? {
+        guard let customID else { return nil }
+        let isRequired = required ?? false
+        let kind: ModalControl.Kind
+        switch type {
         case 4:
-            guard let customID else { return .unsupported(id: stableID, type: type) }
-            return .textInput(
-                id: stableID, customID: customID, style: style ?? 1, label: label,
-                value: value, placeholder: placeholder, required: required ?? true,
-                minLength: minimumLength, maxLength: maximumLength
+            kind = .textInput(
+                style: ModalTextInputStyle(rawValue: style ?? 1) ?? .short,
+                placeholder: placeholder, minLength: minimumLength, maxLength: maximumLength,
+                initialValue: value
             )
         case 3, 5, 6, 7, 8:
-            guard let customID, let kind = ComponentSelectKind(rawValue: type) else {
-                return .unsupported(id: stableID, type: type)
-            }
-            return .select(
-                id: stableID, customID: customID, kind: kind,
-                options: (options?.elements ?? []).map(\.domain), required: required ?? true,
-                minValues: minValues ?? (required == false ? 0 : 1), maxValues: maxValues ?? 1
+            guard let selectKind = ComponentSelectKind(rawValue: type) else { return nil }
+            kind = .select(
+                kind: selectKind, placeholder: placeholder,
+                options: (options?.elements ?? []).map(\.domain),
+                minValues: minValues ?? 1, maxValues: maxValues ?? 1,
+                channelTypes: channelTypes ?? [],
+                defaultValues: (defaultValues?.elements ?? []).compactMap(\.domain)
             )
         case 19:
-            guard let customID else { return .unsupported(id: stableID, type: type) }
-            return .fileUpload(
-                id: stableID, customID: customID, required: required ?? true,
-                minValues: minValues ?? (required == false ? 0 : 1), maxValues: maxValues ?? 1
+            kind = .fileUpload(
+                minValues: minValues ?? 1, maxValues: maxValues ?? 1, fileTypes: fileTypes ?? []
             )
         case 21:
-            guard let customID else { return .unsupported(id: stableID, type: type) }
-            return .radioGroup(
-                id: stableID, customID: customID, options: (options?.elements ?? []).map(\.domain),
-                required: required ?? true
-            )
+            kind = .radioGroup(options: (options?.elements ?? []).map(\.domain))
         case 22:
-            guard let customID else { return .unsupported(id: stableID, type: type) }
-            return .checkboxGroup(
-                id: stableID, customID: customID, options: (options?.elements ?? []).map(\.domain),
-                minValues: minValues ?? (required == false ? 0 : 1),
-                maxValues: maxValues ?? max(1, options?.elements.count ?? 1)
+            let optionCount = options?.elements.count ?? 1
+            kind = .checkboxGroup(
+                options: (options?.elements ?? []).map(\.domain),
+                minValues: minValues ?? (isRequired ? 1 : 0),
+                maxValues: maxValues ?? max(1, optionCount)
             )
         case 23:
-            guard let customID else { return .unsupported(id: stableID, type: type) }
-            return .checkbox(
-                id: stableID, customID: customID, label: label ?? "Enabled",
-                value: defaultValue ?? false
-            )
+            kind = .checkbox(isInitiallyChecked: defaultValue ?? false)
         default:
-            return .unsupported(id: stableID, type: type)
+            return nil
         }
+        return ModalControl(
+            id: stableID, customID: customID, kind: kind, isRequired: isRequired,
+            isDisabled: disabled ?? false, label: type == 4 ? label : nil
+        )
     }
 }

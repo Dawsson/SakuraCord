@@ -213,6 +213,12 @@ public extension DiscordRESTProvider {
         if publishesSoundboardSettings {
             continuation?.yield(.soundboardUserSettingsChanged(soundboardSettings))
         }
+        // A partial update without field 7 leaves command usage unchanged.
+        if !isPartial || DiscordSettingsProto.applicationCommandFrecency(from: patch) != nil,
+           let commandFrecency = DiscordSettingsProto.applicationCommandFrecency(from: updated)
+        {
+            continuation?.yield(.applicationCommandFrecencyChanged(commandFrecency))
+        }
     }
 
     internal func frecencySettingsProto() async throws -> Data {

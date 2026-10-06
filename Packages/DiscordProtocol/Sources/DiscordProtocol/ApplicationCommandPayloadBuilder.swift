@@ -28,8 +28,12 @@ enum ApplicationCommandPayloadBuilder {
         _ invocation: ApplicationCommandInvocation,
         autocomplete: (optionID: String, query: String)?
     ) throws -> ApplicationCommandPayload {
-        guard invocation.command.type == .chatInput else {
-            throw ChatProviderError.invalidRequest("Only chat-input application commands can be sent here.")
+        let command = invocation.command
+        if command.type == .user || command.type == .message {
+            return try contextMenu(invocation, isAutocomplete: autocomplete != nil)
+        }
+        guard command.type == .chatInput else {
+            throw ChatProviderError.invalidRequest("This kind of application command is not supported.")
         }
         let values = Dictionary(
             invocation.values.map { ($0.optionID, $0) },
@@ -62,11 +66,13 @@ enum ApplicationCommandPayloadBuilder {
                 }
                 let query = autocomplete?.query ?? ""
                 try validateAutocompleteQuery(query, for: option)
+                // The focused value is the partial text, sent as a string even
+                // for numeric options (an empty integer query is `""`).
                 options.append(
                     .object([
                         "type": .number(Double(option.type.rawValue)),
                         "name": .string(option.name),
-                        "value": autocompleteValue(query, type: option.type),
+                        "value": .string(query),
                         "focused": .bool(true)
                     ])
                 )
@@ -103,17 +109,45 @@ enum ApplicationCommandPayloadBuilder {
             ]
         }
 
-        let rootValue = try JSONDecoder().decode(JSONValue.self, from: invocation.command.rootCommandJSON)
-        guard case .object = rootValue else {
+        let data = try envelope(invocation, options: options)
+        return ApplicationCommandPayload(data: data, attachmentURLs: attachments)
+    }
+
+    private static func contextMenu(
+        _ invocation: ApplicationCommandInvocation,
+        isAutocomplete: Bool
+    ) throws -> ApplicationCommandPayload {
+        guard !isAutocomplete else {
+            throw ChatProviderError.invalidRequest("Context-menu commands have no autocomplete.")
+        }
+        guard let targetID = invocation.targetID, UInt64(targetID) != nil else {
+            throw ChatProviderError.invalidRequest("Choose a user or message for this command.")
+        }
+        var data = try envelope(invocation, options: [])
+        data["target_id"] = .string(targetID)
+        return ApplicationCommandPayload(data: data, attachmentURLs: [])
+    }
+
+    private static func envelope(
+        _ invocation: ApplicationCommandInvocation,
+        options: [JSONValue]
+    ) throws -> [String: JSONValue] {
+        let decoded = try JSONDecoder().decode(JSONValue.self, from: invocation.command.rootCommandJSON)
+        guard case var .object(root) = decoded else {
             throw ChatProviderError.invalidRequest("The selected command has invalid root metadata.")
         }
+        // The index omits these for context menu commands; the official client
+        // always sends them.
+        if root["description"] == nil { root["description"] = .string("") }
+        if root["options"] == nil { root["options"] = .array([]) }
+        let rootValue = JSONValue.object(root)
         var data: [String: JSONValue] = [
             "version": .string(invocation.command.version),
             "id": .string(invocation.command.rootCommandID),
             "name": .string(invocation.command.executionName),
             "type": .number(Double(invocation.command.type.rawValue)),
             "options": .array(options),
-            "application_command": rootValue
+            "application_command": withResolvedLocalizations(rootValue)
         ]
         // The inner guild_id describes where the command itself was registered,
         // not where a global command happens to be invoked. The interaction's
@@ -121,19 +155,33 @@ enum ApplicationCommandPayloadBuilder {
         if let guildID = invocation.command.guildID {
             data["guild_id"] = .string(guildID.description)
         }
-        return ApplicationCommandPayload(data: data, attachmentURLs: attachments)
+        return data
     }
 
-    private static func autocompleteValue(
-        _ query: String, type: ApplicationCommandOptionType
-    ) -> JSONValue {
-        if type == .integer, let value = Int64(query) {
-            return .number(Double(value))
+    /// The official client sends the definition with the names and descriptions
+    /// it displayed, filling `*_localized` wherever the index omitted them.
+    private static func withResolvedLocalizations(_ value: JSONValue) -> JSONValue {
+        switch value {
+        case var .object(object):
+            for (key, child) in object {
+                object[key] = withResolvedLocalizations(child)
+            }
+            // Context menu commands have an empty description and Discord sends
+            // no localized copy of it.
+            for field in ["name", "description"] {
+                let localizedKey = "\(field)_localized"
+                if case let .string(value)? = object[field], !value.isEmpty,
+                   object[localizedKey] == nil || object[localizedKey] == .null
+                {
+                    object[localizedKey] = object[field]
+                }
+            }
+            return .object(object)
+        case let .array(items):
+            return .array(items.map(withResolvedLocalizations))
+        default:
+            return value
         }
-        if type == .number, let value = Double(query), value.isFinite {
-            return .number(value)
-        }
-        return .string(query)
     }
 
     private static func validateAutocompleteQuery(
@@ -142,7 +190,7 @@ enum ApplicationCommandPayloadBuilder {
         // Autocomplete receives the user's partial value. Discord's minimum length
         // applies to final execution, not to an in-progress query that may need
         // suggestions in order to become valid.
-        if let maximumLength = option.maximumLength, query.count > maximumLength {
+        if let maximumLength = option.maximumLength, query.unicodeScalars.count > maximumLength {
             throw ChatProviderError.invalidRequest(
                 "\(option.displayName) allows at most \(maximumLength) characters."
             )
@@ -190,12 +238,13 @@ enum ApplicationCommandPayloadBuilder {
         _ value: String,
         option: ApplicationCommandOption
     ) throws -> JSONValue {
-        if let minimum = option.minimumLength, value.count < minimum {
+        // Discord's server counts Unicode scalars, not graphemes or UTF-16 units.
+        if let minimum = option.minimumLength, value.unicodeScalars.count < minimum {
             throw ChatProviderError.invalidRequest(
                 "\(option.displayName) needs at least \(minimum) characters."
             )
         }
-        if let maximum = option.maximumLength, value.count > maximum {
+        if let maximum = option.maximumLength, value.unicodeScalars.count > maximum {
             throw ChatProviderError.invalidRequest(
                 "\(option.displayName) allows at most \(maximum) characters."
             )

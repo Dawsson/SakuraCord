@@ -162,3 +162,21 @@ private func replyGroupingFixture() -> (target: Message, reply: Message, followU
     )
     return (target, reply, followUp)
 }
+
+@MainActor
+@Test func `one webhook starts a new group when its presented identity changes`() {
+    func webhookMessage(_ id: UInt64, name: String, seconds: TimeInterval) -> Message {
+        Message(
+            id: MessageID(rawValue: id), channelID: ChannelID(rawValue: 1),
+            author: User(id: UserID(rawValue: 900), username: name, discriminator: "0000", displayName: name, isBot: true),
+            webhookID: "900", content: name, timestamp: Date(timeIntervalSince1970: 1_000 + seconds)
+        )
+    }
+    let messages = [
+        webhookMessage(1, name: "The Impersonator", seconds: 0),
+        webhookMessage(2, name: "SakuraCord Testing", seconds: 5),
+        webhookMessage(3, name: "SakuraCord Testing", seconds: 10),
+    ]
+
+    #expect(MessageGrouping.rows(for: messages).map(\.startsGroup) == [true, true, false])
+}

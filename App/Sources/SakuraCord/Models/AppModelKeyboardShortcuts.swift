@@ -188,11 +188,11 @@ extension AppModel {
         case .togglePins:
             activePinsChannelID != nil
         case .toggleEmojiPicker, .toggleGIFPicker, .toggleStickerPicker:
-            commandComposer.activeCommand == nil && selectedChannelID != nil && selectedConversationAccess.canSend
+            commandComposer(for: activeComposerDestination).activeCommand == nil && selectedChannelID != nil && selectedConversationAccess.canSend
         case .markServerRead:
             selectedGuildID != nil
         case .upload:
-            commandComposer.activeCommand == nil
+            commandComposer(for: activeComposerDestination).activeCommand == nil
                 && selectedChannelID != nil
                 && selectedConversationAccess.canSend
         default: false

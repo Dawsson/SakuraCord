@@ -6,7 +6,7 @@ enum MemberContextMenu {
     static func make(for member: Member, model: AppModel) -> NSMenu {
         let menu = NSMenu()
         add("Profile", symbol: "person.crop.circle", to: menu) {
-            model.presentProfile(for: member, destination: .expanded)
+            model.presentProfile(for: member, in: model.selectedGuildID, destination: .expanded)
             model.dismissContextualProfile()
             model.dismissInspectorProfile()
         }

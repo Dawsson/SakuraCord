@@ -625,18 +625,18 @@ private func verifyAnimatedAndCommandFixtures(
     #expect(messages.contains { $0.content == "This is the synthetic follow-up response." })
 
     let events = await provider.eventStream()
-    let failure = Task { () -> String? in
+    let failure = Task { () -> InteractionFailure? in
         for await event in events {
-            if case .interaction(.failed(let nonce, let message)) = event,
+            if case .interaction(.failed(let nonce, let failure)) = event,
                nonce == "offline-response-failure"
             {
-                return message
+                return failure
             }
         }
         return nil
     }
     try await provider.executeApplicationCommand(try invocation("failure")) { _ in }
-    #expect(await failure.value == "Synthetic interaction failure. No retry was attempted.")
+    #expect(await failure.value?.isMissingAcknowledgement == true)
     messages = try await provider.messages(in: channelID, before: nil, limit: 100).messages
     #expect(!messages.contains { $0.nonce == "offline-response-failure" })
 }

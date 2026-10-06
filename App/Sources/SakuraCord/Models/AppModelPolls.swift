@@ -10,10 +10,46 @@ struct PollVoteMutationState {
     var isSending: Bool
 }
 
+extension MessageUpdate {
+    /// A fetched tally has no ordering token relative to Gateway vote deltas.
+    /// Only a snapshot recorded in the journal establishes a replay baseline.
+    func applyForRefresh(to message: inout Message) {
+        var fields = self
+        fields.pollUpdates = []
+        fields.apply(to: &message)
+        var hasPollBaseline = message.poll?.results?.isFinalized == true
+        var needsPollRefresh = false
+        for update in pollUpdates {
+            switch update {
+            case .snapshot(let poll, _):
+                update.apply(to: &message)
+                hasPollBaseline = hasPollBaseline || poll.results != nil
+                if poll.results != nil { needsPollRefresh = false }
+            case .vote(_, _, let isCurrentUser):
+                if hasPollBaseline || isCurrentUser {
+                    update.apply(to: &message)
+                } else {
+                    needsPollRefresh = true
+                }
+            }
+        }
+        if needsPollRefresh { message.poll?.results = nil }
+    }
+}
+
 private extension Message {
     func selectingCurrentUserPollAnswers(_ answerIDs: Set<Int>) -> Message {
-        guard let poll, poll.results != nil, poll.selectedAnswerIDs != answerIDs else { return self }
+        guard let poll, var results = poll.results, poll.selectedAnswerIDs != answerIDs else { return self }
         var result = self
+        if results.isFinalized {
+            // Final counts are authoritative; only the personal selection may
+            // still need correction when a pending request completes.
+            for index in results.answerCounts.indices {
+                results.answerCounts[index].meVoted = answerIDs.contains(results.answerCounts[index].id)
+            }
+            result.poll?.results = results
+            return result
+        }
         for update in MessagePollUpdate.currentUserSelection(from: poll.selectedAnswerIDs, to: answerIDs) {
             update.apply(to: &result)
         }
@@ -24,16 +60,10 @@ private extension Message {
 extension AppModel {
     func canCreatePoll(in channelID: ChannelID) -> Bool {
         let isThread = openThread?.id == channelID
-        guard let channel = isThread ? selectedChannel : snapshot?.channels.first(where: { $0.id == channelID }),
+        guard let channel = isThread ? openThreadParentChannel : snapshot?.channels.first(where: { $0.id == channelID }),
               (isThread ? openThreadAccess : conversationAccess(for: channel)).canSend else { return false }
-        guard let guildID = channel.guildID else { return true }
-        guard let basis = conversationPermissionBasis(for: guildID),
-              let permissions = ConversationPermissionResolver.effectivePermissions(
-                guild: basis.guild, channel: channel,
-                resolvedBasePermissions: basis.resolvedBasePermissions,
-                overwritePrincipals: basis.overwritePrincipals,
-                hasCurrentRoleIdentity: basis.hasCurrentRoleIdentity
-              ) else { return false }
+        guard channel.guildID != nil else { return true }
+        guard let permissions = effectiveMessagePermissions(in: channel) else { return false }
         return permissions & ((1 << 49) | DiscordPermissionBits.administrator) != 0
     }
 
@@ -98,19 +128,30 @@ extension AppModel {
             latest.confirmed = answerIDs
             latest.isSending = false
             model.pollVoteMutations[messageID] = latest
+            if let message = model.retainedMessage(channelID: channelID, messageID: messageID) {
+                model.recordAuthoritativeMessageUpsert(message)
+                model.reconcilePollSearchMessage(message)
+                model.reconcileInboxMessage(message)
+            }
             model.sendPollVoteMutation(messageID: messageID)
             guard let message = model.retainedMessage(channelID: channelID, messageID: messageID) else { return }
-            if model.pollVoteMutations[messageID] == nil { model.recordAuthoritativeMessageUpsert(message) }
             if message.poll?.results == nil { await model.loadUnknownPollResults(message) }
         }
     }
 
+    func reconcilePollVoteConfirmation(_ update: MessageUpdate) {
+        guard var state = pollVoteMutations[update.messageID], state.channelID == update.channelID else { return }
+        for case let .vote(answerID, isAddition, true) in update.pollUpdates {
+            if isAddition { state.confirmed.insert(answerID) } else { state.confirmed.remove(answerID) }
+        }
+        pollVoteMutations[update.messageID] = state
+    }
+
     private func applyCurrentUserPollSelection(_ answerIDs: Set<Int>, messageID: MessageID, channelID: ChannelID) {
-        guard let poll = retainedMessage(channelID: channelID, messageID: messageID)?.poll else { return }
-        var update = MessageUpdate(messageID: messageID, channelID: channelID)
-        update.pollUpdates = MessagePollUpdate.currentUserSelection(from: poll.selectedAnswerIDs, to: answerIDs)
-        guard !update.pollUpdates.isEmpty else { return }
-        consumeImmediately(.messagePatched(update))
+        guard let message = retainedMessage(channelID: channelID, messageID: messageID) else { return }
+        let updated = message.selectingCurrentUserPollAnswers(answerIDs)
+        guard updated != message else { return }
+        consumeMessageUpdated(updated, preparedTextPlan: nil, recordsRefreshMutation: false)
     }
 
     func pollVotePresentationPreserving(_ incoming: Message) -> Message {
@@ -138,6 +179,22 @@ extension AppModel {
 }
 
 extension AppModel {
+    func messageSearchPagePreservingPollVotes(_ incoming: MessageSearchPage) -> MessageSearchPage {
+        let mutations = messageSearch.pollRefreshJournal?.mutationsByMessageID ?? [:]
+        guard !pollVoteMutations.isEmpty || !mutations.isEmpty else { return incoming }
+        var page = incoming
+        for resultIndex in page.results.indices {
+            for index in page.results[resultIndex].messages.indices {
+                var message = page.results[resultIndex].messages[index]
+                if case .patch(let update) = mutations[message.id] {
+                    update.applyForRefresh(to: &message)
+                }
+                page.results[resultIndex].messages[index] = pollVotePresentationPreserving(message)
+            }
+        }
+        return page
+    }
+
     func reconcilePollSearchMessage(_ message: Message) {
         guard message.poll != nil, var page = messageSearch.page else { return }
         var changed = false
@@ -159,15 +216,69 @@ extension AppModel {
         messageSearch.rowsRevision = revision
     }
 
+    func recordPollRefreshMutation(_ mutation: ConversationRefreshMutation, messageID: MessageID, channelID: ChannelID) {
+        guard pollResultRefreshJournals[messageID] != nil || messageSearch.pollRefreshJournal != nil else { return }
+        let updates: [MessagePollUpdate]
+        switch mutation {
+        case .upsert(let message):
+            // A retained snapshot may have changed only its reactions or pins.
+            // Merge its poll fields rather than replacing fetched results with
+            // that snapshot's still-unknown results.
+            updates = message.poll.map { [.snapshot($0, preservingSelection: false)] } ?? []
+        case .patch(let update):
+            updates = update.pollUpdates
+        case .delete:
+            pollResultRefreshJournals[messageID]?.record(.delete, messageID: messageID)
+            return
+        }
+        guard !updates.isEmpty else { return }
+        var patch = MessageUpdate(messageID: messageID, channelID: channelID)
+        patch.pollUpdates = updates
+        pollResultRefreshJournals[messageID]?.record(.patch(patch), messageID: messageID)
+        messageSearch.pollRefreshJournal?.record(.patch(patch), messageID: messageID)
+    }
+
     func loadUnknownPollResults(_ message: Message) async {
-        guard message.poll?.results == nil else { return }
+        let current = retainedMessage(channelID: message.channelID, messageID: message.id) ?? message
+        guard pollResultRefreshJournals[message.id] == nil else { return }
+        if let poll = current.poll, poll.results != nil {
+            var update = MessageUpdate(messageID: message.id, channelID: message.channelID)
+            update.pollUpdates = [.snapshot(poll, preservingSelection: false)]
+            consumeImmediately(.messagePatched(update))
+            return
+        }
         let session = accountSession()
+        conversationRefreshJournalRevision &+= 1
+        let revision = conversationRefreshJournalRevision
+        pollResultRefreshJournals[message.id] = ConversationRefreshJournal(revision: revision)
+        defer {
+            if isCurrentAccountSession(session), pollResultRefreshJournals[message.id]?.revision == revision {
+                pollResultRefreshJournals[message.id] = nil
+            }
+        }
         do {
-            let page = try await session.provider.messages(in: message.channelID, anchoredAt: .around(message.id), limit: 1)
-            guard isCurrentAccountSession(session), let updated = page.messages.first(where: { $0.id == message.id }) else { return }
-            consumeImmediately(.messageUpdated(updated))
+            for attempt in 0 ..< 2 {
+                let page = try await session.provider.messages(in: message.channelID, anchoredAt: .around(message.id), limit: 1)
+                guard !Task.isCancelled, isCurrentAccountSession(session),
+                      let journal = pollResultRefreshJournals[message.id], journal.revision == revision,
+                      let fetched = page.messages.first(where: { $0.id == message.id }) else { return }
+                let mutations = ConversationRefreshMutations(messages: journal.mutationsByMessageID, updatedUsers: journal.updatedUsers)
+                guard let poll = Self.applyingConversationRefreshMutations(mutations, to: [fetched]).first?.poll else { return }
+                if poll.results == nil, fetched.poll?.results != nil {
+                    guard attempt == 0 else {
+                        errorMessage = "Poll results changed while loading. Try again."
+                        return
+                    }
+                    pollResultRefreshJournals[message.id] = ConversationRefreshJournal(revision: revision)
+                    continue
+                }
+                var update = MessageUpdate(messageID: message.id, channelID: message.channelID)
+                update.pollUpdates = [.snapshot(poll, preservingSelection: false)]
+                consumeImmediately(.messagePatched(update))
+                return
+            }
         } catch {
-            guard isCurrentAccountSession(session) else { return }
+            guard !Task.isCancelled, isCurrentAccountSession(session) else { return }
             errorMessage = error.localizedDescription
         }
     }

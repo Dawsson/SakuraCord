@@ -6,12 +6,16 @@ struct ModalGlassButton: View {
     let symbol: String
     let label: String
     var primary = false
+    /// Replaces the label with the interaction dots, keeping the button's size.
+    var isLoading = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Label(label, systemImage: symbol)
                 .font(.body.weight(.semibold))
+                .opacity(isLoading ? 0 : 1)
+                .overlay { if isLoading { InteractionLoadingDotsView(tone: primary ? .onFill : .content) } }
                 .padding(.horizontal, 16)
                 .frame(height: 40)
                 .contentShape(Capsule())
